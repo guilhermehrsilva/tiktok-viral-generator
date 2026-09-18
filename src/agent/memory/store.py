@@ -1,6 +1,12 @@
 """Memoria do agente em SQLite.
 
-No M1 guarda so a serie de sinais -- que e o que permite calcular velocidade
+Tres coisas distintas, e nao um armazem generico: a **serie de sinais** (do
+radar), o **ledger de temas** (do curador) e os **dossies** (do pesquisador).
+Cada uma responde a uma pergunta diferente -- "esta subindo?", "ja falamos
+disso?", "o que sabemos e de onde?" -- e misturar as tres numa tabela de
+documentos tornaria impossivel responder qualquer uma delas por SQL.
+
+A serie de sinais e o que permite calcular velocidade
 para fontes que reportam nivel e nao taxa (Wikipedia, Google Trends). Sem
 historico, "500 mil pageviews" e um numero sem significado: nao da para saber se
 o assunto esta subindo ou ja passou.
@@ -8,13 +14,14 @@ o assunto esta subindo ou ja passou.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from agent.models import Decision, Signal
+from agent.models import Decision, Dossier, Signal
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS signals (
@@ -46,6 +53,31 @@ CREATE TABLE IF NOT EXISTS topics (
 -- O ledger e sempre lido por "temas aprovados recentemente", nunca inteiro.
 CREATE INDEX IF NOT EXISTS idx_topics_verdict_decided
     ON topics(verdict, decided_at DESC);
+
+CREATE TABLE IF NOT EXISTS dossiers (
+    id            INTEGER PRIMARY KEY,
+    topic         TEXT    NOT NULL,
+    model         TEXT    NOT NULL,
+    provider      TEXT    NOT NULL,
+    fact_count    INTEGER NOT NULL,
+    source_count  INTEGER NOT NULL,
+    -- Custo medido na hora da pesquisa. Reconstruir isso do log depois nao da:
+    -- o provedor nao devolve consumo retroativo, e o eval do M5 compara custo.
+    input_tokens  INTEGER NOT NULL,
+    output_tokens INTEGER NOT NULL,
+    latency_s     REAL    NOT NULL,
+    -- JSON do Dossier inteiro. Guardar o contrato serializado, em vez de uma
+    -- tabela de fatos normalizada, mantem o dossie reproduzivel palavra por
+    -- palavra -- que e o que o juiz vai reler no M5 para julgar o mesmo material.
+    dossier_json  TEXT    NOT NULL,
+    -- Fatos que os portoes derrubaram, com motivo. Mesma regra do ledger de
+    -- temas: sem o descartado, so se sabe o que entrou, nunca o que foi perdido.
+    discarded_json TEXT   NOT NULL,
+    failures_json TEXT    NOT NULL,
+    created_at    TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_dossiers_topic_created
+    ON dossiers(topic, created_at DESC);
 """
 
 
@@ -140,6 +172,57 @@ class SignalStore:
     def topic_count(self) -> int:
         with self._conn() as conn:
             return int(conn.execute("SELECT COUNT(*) AS n FROM topics").fetchone()["n"])
+
+    # ------------------------------------------------------------------ dossies
+
+    def record_dossier(
+        self,
+        dossier: Dossier,
+        *,
+        model: str,
+        provider: str,
+        usage: tuple[int, int],
+        latency_s: float,
+        source_count: int,
+        discarded: list[dict] | None = None,
+        failures: dict[str, str] | None = None,
+    ) -> int:
+        """Grava o dossie com o custo medido. Devolve o id da linha."""
+        with self._conn() as conn:
+            cur = conn.execute(
+                "INSERT INTO dossiers (topic, model, provider, fact_count, source_count,"
+                " input_tokens, output_tokens, latency_s, dossier_json, discarded_json,"
+                " failures_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    dossier.topic, model, provider, len(dossier.facts), source_count,
+                    usage[0], usage[1], latency_s,
+                    dossier.model_dump_json(),
+                    json.dumps(discarded or [], ensure_ascii=False),
+                    json.dumps(failures or {}, ensure_ascii=False),
+                    datetime.now(UTC).isoformat(),
+                ),
+            )
+        return int(cur.lastrowid or 0)
+
+    def latest_dossier(self, topic: str | None = None) -> Dossier | None:
+        """O dossie mais recente, do tema pedido ou de qualquer tema.
+
+        E o que liga o pesquisador ao roteirista sem passar arquivo na mao: o
+        roteiro sai do que ficou gravado, nao de um JSON solto no disco.
+        """
+        sql = "SELECT dossier_json FROM dossiers"
+        params: tuple = ()
+        if topic:
+            sql += " WHERE topic = ?"
+            params = (topic,)
+        sql += " ORDER BY created_at DESC, id DESC LIMIT 1"
+        with self._conn() as conn:
+            row = conn.execute(sql, params).fetchone()
+        return Dossier.model_validate_json(row["dossier_json"]) if row else None
+
+    def dossier_count(self) -> int:
+        with self._conn() as conn:
+            return int(conn.execute("SELECT COUNT(*) AS n FROM dossiers").fetchone()["n"])
 
 
 def _parse_iso(value: str) -> datetime:

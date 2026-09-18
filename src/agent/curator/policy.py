@@ -19,7 +19,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from agent.curator.text import normalize
+from agent.text import normalize
 
 
 @dataclass(frozen=True)

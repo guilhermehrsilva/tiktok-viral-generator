@@ -8,8 +8,9 @@ o [MoneyPrinterTurbo](https://github.com/harry0703/MoneyPrinterTurbo) (MIT) faz 
 bem. O que não existe é a metade de cima: **descobrir o que vale a pena falar, e provar
 que o que se fala é verdade.** É essa metade que este repositório constrói.
 
-> Estado atual: **M2 concluído** — o agente já escolhe sozinho um tema do dia,
-> com justificativa gravada. Veja [Marcos](#marcos).
+> Estado atual: **M3 em andamento** — o agente escolhe o tema do dia e monta o
+> dossiê, com cada fato amarrado a uma URL e a um trecho conferido na própria
+> página. Falta o roteirista e o juiz. Veja [Marcos](#marcos).
 
 ## Por que grounding com citação não é enfeite
 
@@ -30,7 +31,7 @@ radar → curador → pesquisador → roteirista → juiz → [Renderer] → [Pu
                       ↑              ↑         ↑
                   [LLM] ────────────────────────┘
                       ↑
-                  memória (SQLite + embeddings locais)
+                  memória (SQLite: sinais, temas, dossiês)
 ```
 
 O `Renderer` é uma porta porque a primeira implementação delega ao MoneyPrinterTurbo
@@ -78,7 +79,7 @@ O comando imprime as dimensões e a duração **medidas com `ffprobe`** e falha 
 sair em 1080x1920 ou fora da faixa de 60–90s. Aceite medido, não presumido.
 
 ```bash
-uv run pytest          # 28 testes, sem rede
+uv run pytest          # 236 testes, sem rede e sem chave de LLM
 uv run ruff check .
 ```
 
@@ -178,6 +179,104 @@ O que ele **não** pega é paráfrase sem palavra em comum. Essa é a lacuna que
 embeddings — e, por estar atrás da porta `Deduplicator`, trocar a técnica e medir contra a
 mesma base de temas é barato. É o tipo de evidência que o M5 produz.
 
+## O pesquisador
+
+```bash
+uv run agent research                 # tema vem do curador
+uv run agent research --topic "..." --url https://fonte/materia
+```
+
+É onde entra o primeiro LLM do projeto. O estágio recebe um tema e devolve um
+dossiê: de 3 a 5 fontes lidas, e cada `Fact` com afirmação, URL, nome do veículo
+e o **trecho literal** que a sustenta.
+
+A decisão que sustenta o resto: **uma chamada de modelo por fonte, e a URL é
+estampada por nós.** O modelo recebe o texto de uma página e devolve afirmações
+sobre aquela página; de onde veio o texto é informação que já temos. Pedir
+`source_url` ao modelo convidaria o erro mais caro possível aqui — fato real com
+fonte trocada, que parece ancorado, passa no juiz e só aparece quando alguém
+clica no link. Com isso, "não existe `Fact` sem URL verificável" deixa de
+depender da honestidade do modelo e passa a ser estrutural.
+
+### Descoberta de fontes sem buscador pago
+
+Não existe API de busca web gratuita que sirva: Google e Bing cobram, e raspar
+SERP quebra em uma semana. O que existe de graça, e já está na stack:
+
+| Estratégia | O que dá | Custo |
+|---|---|---|
+| `news_item` do Google Trends RSS | título, veículo e URL, já associados ao tema | $0, vem na coleta do radar |
+| API do Algolia (`/items/{id}`) | o artigo por trás da discussão do Hacker News | $0, sem chave |
+| GDELT DOC 2.0 em `artlist` | quem mais escreveu sobre o tema | $0, sem chave, instável |
+
+Nenhuma cobre todo tema — item do HN não tem matéria associada, tema do Trends
+não passa pelo Algolia, GDELT devolve 429 com frequência — então as três rodam e
+o relatório diz quais falharam. Há teto de 2 páginas por domínio: cinco páginas
+do mesmo site não são cinco fontes, e o juiz não tem como saber a diferença
+olhando só o dossiê.
+
+### Dois portões antes de um fato entrar
+
+Os dois são determinísticos e não gastam token. Existem porque o modelo pode
+parecer certo estando errado, e porque pedir a ele que se audite não é
+verificação.
+
+1. **O trecho citado tem que existir na página.** O modelo devolve, junto de cada
+   afirmação, a passagem literal que a sustenta. Conferir passagem é `in` numa
+   string — barato e impossível de enganar. Paráfrase onde devia haver cópia
+   reprova: não dá para saber se a afirmação é verdadeira, e "não dá para saber"
+   reprova.
+2. **Todo número da afirmação tem que estar na fonte.** Número é o que o roteiro
+   usa para convencer, e é o que um modelo inventa com mais confiança.
+
+O portão numérico compara **dígitos**, não valores: pt-BR escreve `5,9` e inglês
+escreve `5.9` para a mesma coisa, e `1.500` é mil e quinhentos em português e um
+e meio em inglês. Casar só os dígitos resolve os dois sentidos sem criar falso
+negativo por vírgula.
+
+O caminho óbvio — medir sobreposição de vocabulário entre a afirmação e a página
+— está errado aqui, e por um motivo que só aparece quando se olha as fontes
+reais: elas são quase todas em inglês e a afirmação sai em pt-BR. "Retém 98,2% do
+desempenho" e *"retains 98.2% of performance"* não compartilham uma palavra. O
+portão reprovaria justamente os fatos bem traduzidos. **Número sobrevive à
+tradução; palavra não.**
+
+**Todo fato derrubado é gravado com o motivo**, junto do dossiê, e a CLI imprime
+os descartes antes do resultado. É o que diz se o portão está calibrado ou
+estrangulando — sem isso, um portão apertado demais só apareceria como "o
+modelo está ruim hoje".
+
+### Custo medido, não estimado
+
+`Completion` carrega tokens de entrada, de saída e latência, e a tabela
+`dossiers` guarda isso em coluna própria. O eval do M5 compara free tier contra
+modelo pago na mesma rubrica, e essa comparação só vale se o custo for medido na
+hora — provedor não devolve consumo retroativo. No Gemini Flash, os tokens de
+raciocínio interno entram na conta: saem do mesmo orçamento, e ignorá-los
+subestimaria o consumo.
+
+### Os dois provedores desde já
+
+| Provedor | Formato estruturado | Papel |
+|---|---|---|
+| Gemini Flash (AI Studio) | `responseSchema` nativo | padrão; pt-BR melhor |
+| Groq (endpoint compatível com OpenAI) | `json_object` + schema no prompt | segundo braço, muito mais rápido |
+
+Porta com um único adaptador não é porta, é indireção — por isso os dois entram
+juntos, com teste de conformidade. As chaves são gratuitas e ficam só no `.env`:
+
+```bash
+AGENT_GEMINI_API_KEY=...   # aistudio.google.com/apikey
+AGENT_GROQ_API_KEY=...     # console.groq.com/keys
+
+uv run agent llm-health    # confere qual id de modelo ainda responde, e a que custo
+```
+
+`llm-health` existe porque id de modelo de free tier é descontinuado sem aviso, e
+o erro apareceria no meio de uma pesquisa, depois de gastar tempo lendo páginas.
+Ele gasta uma chamada mínima e reporta quem respondeu, em quanto tempo e por
+quantos tokens — verifica o artefato, não a configuração.
+
 ## Marcos
 
 | | Marco | Estado |
@@ -185,7 +284,7 @@ mesma base de temas é barato. É o tipo de evidência que o M5 produz.
 | M0 | Porta Renderer + aceite medido do MP4 | **concluído** |
 | M1 | Radar (HN, Trends, Wikipedia, GDELT) | **concluído** |
 | M2 | Curador: score, filtro de política, dedup por memória | **concluído** |
-| M3 | Pesquisador + roteirista + juiz com rubrica | a fazer |
+| M3 | Pesquisador + roteirista + juiz com rubrica | **pesquisador concluído**; roteirista e juiz a fazer |
 | M4 | Publicador (TikTok, inbox, rótulo AIGC) | a fazer |
 | M5 | Eval: free tier vs. modelo pago na mesma rubrica | a fazer |
 
@@ -206,6 +305,21 @@ Publicados aqui de propósito, não escondidos.
 - **O edge-tts usa o endpoint de leitura em voz alta do Edge.** Grátis, sem contrato, pode
   quebrar. O fallback planejado é o Kokoro-82M local (Apache 2.0, vozes pt-BR), que roda
   em CPU.
+- **Os adaptadores de LLM ainda não foram exercitados contra a API real.** Os
+  testes cobrem o contrato (payload, tradução de schema, contagem de tokens, tipo
+  de exceção por falha) contra o formato de resposta documentado, não contra o
+  serviço. Enquanto `uv run agent llm-health` não rodar com chave, o id de modelo
+  padrão é suposição — e o projeto verifica artefato, não configuração.
+- **O portão de trecho reprova paráfrase.** Quando o modelo reescreve onde devia
+  copiar, o fato cai mesmo que seja verdadeiro. O erro é assimétrico de propósito:
+  dossiê curto com motivo gravado é calibrável, dossiê cheio de fato frouxo não.
+  Os descartes ficam no banco justamente para essa calibração ter dado.
+- **O portão numérico não confere unidade nem contexto.** "5,9 GB" casa com uma
+  página que diz "5,9 milhões de downloads". A alternativa seria pedir ao próprio
+  modelo que se auditasse, o que não é verificação.
+- **Não há busca web gratuita.** A descoberta de fontes depende do que o Trends
+  RSS já associou, do link por trás do item do HN e do GDELT — que devolve 429 com
+  frequência. Tema fora dessas três trilhas pode não render dossiê nenhum.
 - **Viralidade não é previsível offline.** A rubrica mede qualidade de roteiro, não
   resultado. O único sinal real é retenção pós-publicação, e é isso que o M5 coleta.
 - **Nenhuma estimativa de receita será publicada** até haver número medido do próprio canal.

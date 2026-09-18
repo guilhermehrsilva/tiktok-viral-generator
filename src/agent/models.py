@@ -31,6 +31,11 @@ class Fact(BaseModel):
     claim: str = Field(min_length=10)
     source_url: HttpUrl
     source_name: str = Field(min_length=2)
+    # Passagem literal da fonte que sustenta a afirmacao. Opcional porque o
+    # roteiro de referencia do M0 foi escrito a mao, sem ela; o pesquisador (M3)
+    # sempre preenche, e o portao que confere se a passagem existe de fato na
+    # pagina e o que torna a citacao verificavel sem nova requisicao.
+    quote: str = ""
 
 
 class Dossier(BaseModel):

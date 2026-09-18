@@ -46,6 +46,29 @@ class Settings(BaseSettings):
     font_size: int = 72
     subtitle_position: str = "two_thirds_bottom"
 
+    # --- LLM (primeiro modelo do projeto, M3) ---
+    # Sob a restricao de $0 o padrao nao e Claude: e free tier. O adaptador do
+    # Claude existe para o braco pago do eval do M5 -- a comparacao medida e o
+    # artefato, nao o modelo escolhido.
+    llm_provider: str = "gemini"
+    gemini_api_key: str = ""
+    # Ids de modelo de free tier mudam e sao descontinuados sem aviso. Ficam
+    # configuraveis, e `agent llm-health` confere contra o provedor em vez de
+    # confiar que o padrao ainda existe.
+    gemini_model: str = "gemini-2.5-flash"
+    groq_api_key: str = ""
+    groq_model: str = "llama-3.3-70b-versatile"
+    llm_timeout_s: float = 60.0
+
+    # --- pesquisador ---
+    # Cinco fontes cobrem um tema sem estourar a cota por minuto do free tier
+    # (uma chamada de modelo por fonte).
+    research_max_sources: int = 5
+    research_max_facts_per_source: int = 4
+    # Caracteres de cada pagina que vao no prompt. Pagina de noticia inteira e
+    # cota gasta em menu e rodape.
+    research_page_chars: int = 8000
+
     # --- armazenamento ---
     data_dir: Path = PROJECT_ROOT / "data"
     output_dir: Path = PROJECT_ROOT / "output"

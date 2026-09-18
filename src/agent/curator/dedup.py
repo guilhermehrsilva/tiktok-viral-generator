@@ -18,7 +18,7 @@ vs "PrismML reduz footprint em 9x"). Essa e a lacuna que justificaria embeddings
 
 from __future__ import annotations
 
-from agent.curator.text import content_tokens
+from agent.text import content_tokens
 
 # Calibrado na mao contra titulos reais do radar. Acima disso, dois titulos
 # praticamente sempre falam da mesma coisa; abaixo, comecam a aparecer pares que

@@ -10,9 +10,9 @@ import pytest
 
 from agent.curator import niche, policy
 from agent.curator.dedup import LexicalDeduplicator, jaccard
-from agent.curator.text import content_tokens, normalize
 from agent.ports.dedup import Deduplicator
 from agent.radar.sources.hacker_news import HackerNews
+from agent.text import content_tokens, normalize
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "radar"
 

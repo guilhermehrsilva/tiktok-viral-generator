@@ -25,7 +25,7 @@ Duas coisas foram aprendidas medindo contra titulos reais, nao no papel:
 
 from __future__ import annotations
 
-from agent.curator.text import content_tokens
+from agent.text import content_tokens
 
 # Termos que sozinhos ja caracterizam o nicho.
 NUCLEO = frozenset("""

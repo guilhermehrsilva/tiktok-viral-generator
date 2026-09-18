@@ -11,13 +11,8 @@ código: por que ele é assim, onde paramos, e o que vem a seguir.
 
 ## Onde paramos
 
-**M2 concluído.** Três commits em `main`, árvore limpa, 111 testes passando sem rede.
-
-```
-b93cc38  M2: curador com tres portoes, score por percentil e ledger de temas
-96ba51c  M1: radar de tendencias com quatro fontes gratuitas
-a326219  M0: porta Renderer sobre o MoneyPrinterTurbo, com aceite medido
-```
+**M3, fatia 1 de 3 concluída** — porta `LLM` com os dois adaptadores de free tier, e o
+pesquisador. 236 testes passando sem rede e sem chave.
 
 O que já roda ponta a ponta, a custo zero:
 
@@ -25,11 +20,34 @@ O que já roda ponta a ponta, a custo zero:
 |---|---|
 | `uv run agent radar` | coleta 4 fontes gratuitas (~19s) e grava a série |
 | `uv run agent curate` | coleta, aplica 3 portões, escolhe 1 tema e grava o motivo de cada decisão |
+| `uv run agent research` | monta o dossiê do tema: 3–5 fontes, cada fato com URL e trecho conferidos |
+| `uv run agent llm-health` | confere qual id de modelo ainda responde, e a que custo |
 | `uv run agent render --script <json>` | produz MP4 1080x1920 com narração pt-BR e legenda karaokê |
 | `uv run agent health` | checa se o renderizador responde |
 
-**A lacuna é o meio:** `curate` entrega um tema, `render` consome um roteiro pronto. Ainda
-não existe nada que transforme um no outro. É isso o M3.
+**A lacuna agora é menor:** `research` entrega um `Dossier` gravado, `render` consome um
+`Script`. Falta o roteirista (dossiê → roteiro) e o juiz (rubrica de 7 critérios) — as
+fatias 2 e 3 do M3.
+
+### O que falta verificar com chave
+
+Os adaptadores foram testados contra o **formato** de resposta, não contra o serviço. Não
+há chave de LLM nesta máquina ainda. Antes de escrever o roteirista:
+
+```bash
+# as duas são gratuitas e sem cartão
+echo 'AGENT_GEMINI_API_KEY=...' >> .env    # aistudio.google.com/apikey
+echo 'AGENT_GROQ_API_KEY=...'   >> .env    # console.groq.com/keys
+
+uv run agent llm-health                    # confirma id de modelo e custo real
+uv run agent research --topic "Bonsai 2 27B: modelo de 27B em 5,9 GB" \
+  --url https://prismml.com/news/bonsai-2-27b
+```
+
+Se `llm-health` falhar com 404, o id de modelo padrão em `config.py` foi descontinuado —
+é configuração, não código. E vale olhar a lista de descartes da primeira pesquisa real:
+se o portão de trecho estiver derrubando quase tudo, ele está apertado demais e a
+calibração tem dado (os descartes ficam gravados em `dossiers.discarded_json`).
 
 ### Para retomar o ambiente
 
@@ -68,17 +86,18 @@ uv run pytest && uv run ruff check .
 
 ## Para onde vamos
 
-### M3 — pesquisador + roteirista + juiz (próximo)
+### M3 — pesquisador + roteirista + juiz (em andamento)
 
 É onde entra **o primeiro LLM do projeto**, e a maior parte do valor de portfólio.
 
-- **Porta `LLM`** com adaptadores. Sob a restrição $0 o caminho padrão **não é Claude**:
-  free tier do Gemini Flash ou Groq. Manter um adaptador Claude para o braço pago do
+- ~~**Porta `LLM`** com adaptadores~~ **feito.** `gemini_free.py` e `groq.py` desde já,
+  porque porta com um adaptador só é indireção. O adaptador Claude entra no braço pago do
   eval do M5 — a comparação medida é o artefato, não o modelo escolhido.
-- **Pesquisador.** Parte dos `news_items` que o Google Trends RSS já entrega de graça
-  (título, veículo, URL), busca 3–5 fontes e extrai `Fact(claim, source_url, source_name)`.
-  Os contratos `Fact` e `Dossier` já existem em `src/agent/models.py` e já validam:
-  não existe `Fact` sem URL, nem dossiê sem fato.
+- ~~**Pesquisador**~~ **feito.** Descoberta por três trilhas grátis (`news_items` do
+  Trends, artigo por trás do item do HN via Algolia, GDELT `artlist`), **uma chamada de
+  modelo por fonte** e URL estampada por nós — o modelo nunca informa a fonte. Dois
+  portões determinísticos antes de o fato entrar: o trecho citado tem de existir
+  literalmente na página, e todo número da afirmação tem de estar na fonte.
 - **Roteirista.** Produz um `Script` (contrato já existe e já é validado pelos testes do
   M0): hook ≤1,5s, corpo, fechamento, 60–90s, `search_terms` **em inglês e em ordem
   cronológica**. Toda afirmação factual ancorada num `Fact` do dossiê.
@@ -96,7 +115,9 @@ uv run pytest && uv run ruff check .
   o tamanho original). É isso que o critério 4 chama de ponto de vista próprio.
 
 - **Aceite:** roteiro aprovado com 100% das afirmações rastreáveis a uma URL; fixture
-  adversarial com afirmação sem fonte é reprovado pelo juiz.
+  adversarial com afirmação sem fonte é reprovado pelo juiz. *A metade do dossiê já está
+  coberta: `tests/test_researcher.py` prova que todo fato tem URL, que a URL vem de nós
+  mesmo quando o modelo manda outra, e que número inventado é descartado com motivo.*
 
 ### M4 — publicador
 OAuth do TikTok + Content Posting API via `video.upload` (inbox — **não** exige auditoria).
@@ -166,4 +187,19 @@ medido, e não upgrade assumido.
   de biologia marinha por engano. O erro é assimétrico de propósito e está documentado em
   teste: deixar passar política partidária custa muito mais caro que perder um vídeo sobre
   cefalópodes.
+- **`MockTransport` entrega o corpo num único chunk.** Um teto de bytes implementado só
+  como `break` no laço de `iter_bytes()` passa no teste e não vale nada contra um servidor
+  real, que manda pedaços de 64 KB. O teto precisa cortar o acumulado também.
+- **"5,9 GB" tokeniza em "5" e "9".** Dígito solto não é termo distintivo: a consulta do
+  GDELT saía como `"27b 2 5"` e deixava o nome do produto de fora. Piso de 2 caracteres
+  para token com dígito, 3 para o resto.
+- **Sobreposição de vocabulário não serve para conferir fato.** As fontes de tech são em
+  inglês e a afirmação sai em pt-BR: "retém 98,2% do desempenho" e *"retains 98.2% of
+  performance"* não compartilham uma palavra. Só o número sobrevive à tradução — é por isso
+  que o portão de ancoragem compara dígitos, e não texto.
+- **Não pedir `source_url` ao modelo.** Fato real com fonte trocada parece ancorado, passa
+  no juiz e só aparece quando alguém clica. Uma chamada por fonte, URL estampada por nós.
+- **Lista no topo do JSON não deve virar o primeiro elemento.** Se o modelo devolve
+  `[{...}, {...}]` onde se pediu um objeto, aproveitar o primeiro item devolveria um dossiê
+  com um fato e nenhum aviso de que os outros foram jogados fora.
 - **Segredos só no `.env`** (git-ignored).

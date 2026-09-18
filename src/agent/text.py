@@ -1,7 +1,8 @@
-"""Normalizacao de texto compartilhada pelo curador.
+"""Normalizacao de texto compartilhada pelos estagios.
 
-Fica separada porque politica, nicho e deduplicacao precisam do mesmo
-tratamento: se cada um normalizasse a seu modo, "Inteligência" casaria numa
+Fica separada porque quatro lugares precisam do mesmo tratamento: o filtro de
+politica, o portao de nicho, a deduplicacao e a montagem da consulta de busca do
+pesquisador. Se cada um normalizasse a seu modo, "Inteligência" casaria numa
 regra e escaparia da outra.
 """
 
