@@ -318,6 +318,112 @@ def _curate_one(store: Any) -> Decision:
     return escolhido
 
 
+@app.command()
+def write(
+    topic: str = typer.Option("", "--topic", "-t", help="tema; sem isso, usa o ultimo dossie"),
+    llm: str = typer.Option("", "--llm", help="gemini ou groq; padrao vem do .env"),
+    out: Path = typer.Option(None, "--out", "-o", help="grava o roteiro em JSON para render"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="nao grava na memoria"),
+) -> None:
+    """Escreve o roteiro a partir de um dossie ja gravado."""
+    from agent.adapters.llm_factory import build_llm
+    from agent.memory.store import SignalStore
+    from agent.ports.llm import LLMError
+    from agent.writer.writer import Screenwriter
+
+    settings.ensure_dirs()
+    store = SignalStore(settings.db_path)
+
+    dossier = store.latest_dossier(topic or None)
+    if dossier is None:
+        alvo = f" para o tema {topic!r}" if topic else ""
+        typer.secho(
+            f"nenhum dossie{alvo} na memoria. Rode `uv run agent research` primeiro.",
+            fg=typer.colors.RED,
+        )
+        raise typer.Exit(code=2)
+
+    typer.echo(f"tema      : {dossier.topic}")
+    typer.echo(f"dossie    : {len(dossier.facts)} fatos de "
+               f"{len(dossier.source_urls)} fonte(s)")
+
+    try:
+        modelo = build_llm(llm or None)
+    except LLMError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED)
+        raise typer.Exit(code=2) from exc
+    typer.echo(f"modelo    : {modelo.provider}/{modelo.model}")
+
+    typer.echo("escrevendo (corrige sozinho o que e mecanico)...")
+    try:
+        report = Screenwriter(modelo).write(dossier)
+    except LLMError as exc:
+        typer.secho(f"falha do provedor: {exc}", fg=typer.colors.RED)
+        raise typer.Exit(code=1) from exc
+
+    # As tentativas corrigidas aparecem mesmo no sucesso: se toda execucao gasta
+    # duas rodadas no mesmo defeito, o prompt e que esta fraco.
+    for i, tentativa in enumerate(report.attempts, start=1):
+        if tentativa.violations:
+            typer.secho(f"tentativa {i} reprovada ({tentativa.word_count} palavras):",
+                        fg=typer.colors.YELLOW)
+            for v in tentativa.violations:
+                typer.secho(f"  - {v}", fg=typer.colors.BRIGHT_BLACK)
+
+    custo = report.usage
+    typer.echo(f"custo     : {custo.input_tokens} tokens de entrada, "
+               f"{custo.output_tokens} de saida, {report.latency_s}s de modelo, "
+               f"{len(report.attempts)} tentativa(s)")
+
+    if not report.ok:
+        typer.secho("\nnenhum roteiro passou nos portoes mecanicos", fg=typer.colors.RED)
+        raise typer.Exit(code=1)
+
+    script = report.script
+    typer.echo("")
+    typer.secho(f"ROTEIRO: {script.word_count} palavras "
+                f"(~{script.estimated_duration_s:.0f}s estimados)",
+                fg=typer.colors.GREEN, bold=True)
+    typer.echo("")
+    typer.secho("  HOOK", bold=True)
+    typer.echo(f"  {script.hook}")
+    typer.echo("")
+    typer.secho("  CORPO", bold=True)
+    for paragrafo in script.body.split("\n"):
+        if paragrafo.strip():
+            typer.echo(f"  {paragrafo.strip()}")
+    typer.echo("")
+    typer.secho("  FECHAMENTO", bold=True)
+    typer.echo(f"  {script.closing}")
+    typer.echo("")
+    typer.echo(f"  termos: {', '.join(script.search_terms)}")
+    typer.echo(f"  fatos : {len(script.facts)} do dossie")
+
+    if out is not None:
+        out.write_text(
+            script.model_dump_json(indent=2, exclude_none=True) + "\n", encoding="utf-8"
+        )
+        typer.echo(f"\ngravado em {out}")
+        typer.echo(f"renderize com: uv run agent render --script {out}")
+
+    if dry_run:
+        typer.secho("\n--dry-run: roteiro nao gravado na memoria", fg=typer.colors.YELLOW)
+        return
+
+    linha = store.record_script(
+        script,
+        model=modelo.model,
+        provider=modelo.provider,
+        usage=(custo.input_tokens, custo.output_tokens),
+        latency_s=report.latency_s,
+        attempts=[
+            {"violations": a.violations, "word_count": a.word_count} for a in report.attempts
+        ],
+        dossier_id=store.latest_dossier_id(dossier.topic),
+    )
+    typer.echo(f"\nroteiro #{linha} gravado ({store.script_count()} na memoria)")
+
+
 @app.command("llm-health")
 def llm_health() -> None:
     """Confere se as chaves e os ids de modelo configurados ainda respondem.

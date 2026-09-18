@@ -11,8 +11,9 @@ código: por que ele é assim, onde paramos, e o que vem a seguir.
 
 ## Onde paramos
 
-**M3, fatia 1 de 3 concluída** — porta `LLM` com os dois adaptadores de free tier, e o
-pesquisador. 236 testes passando sem rede e sem chave.
+**M3, fatias 1 e 2 de 3 concluídas** — porta `LLM` com os dois adaptadores de free tier,
+pesquisador e roteirista. 268 testes passando sem rede e sem chave. **O ciclo tema → MP4
+está fechado**; o que falta é o juiz que decide se o roteiro merece ser renderizado.
 
 O que já roda ponta a ponta, a custo zero:
 
@@ -21,13 +22,15 @@ O que já roda ponta a ponta, a custo zero:
 | `uv run agent radar` | coleta 4 fontes gratuitas (~19s) e grava a série |
 | `uv run agent curate` | coleta, aplica 3 portões, escolhe 1 tema e grava o motivo de cada decisão |
 | `uv run agent research` | monta o dossiê do tema: 3–5 fontes, cada fato com URL e trecho conferidos |
+| `uv run agent write --out <json>` | escreve o roteiro do último dossiê, corrigindo sozinho o que é mecânico |
 | `uv run agent llm-health` | confere qual id de modelo ainda responde, e a que custo |
 | `uv run agent render --script <json>` | produz MP4 1080x1920 com narração pt-BR e legenda karaokê |
 | `uv run agent health` | checa se o renderizador responde |
 
-**A lacuna agora é menor:** `research` entrega um `Dossier` gravado, `render` consome um
-`Script`. Falta o roteirista (dossiê → roteiro) e o juiz (rubrica de 7 critérios) — as
-fatias 2 e 3 do M3.
+**A lacuna agora é uma só:** nada decide se o roteiro é bom antes de gastar minutos de
+render. O roteirista já garante o que é contável (faixa de 150–225 palavras, termo em
+ASCII, índice de fato válido, número em dígito ancorado no dossiê); a rubrica de 7
+critérios do juiz é a fatia 3.
 
 ### O que falta verificar com chave
 
@@ -42,6 +45,7 @@ echo 'AGENT_GROQ_API_KEY=...'   >> .env    # console.groq.com/keys
 uv run agent llm-health                    # confirma id de modelo e custo real
 uv run agent research --topic "Bonsai 2 27B: modelo de 27B em 5,9 GB" \
   --url https://prismml.com/news/bonsai-2-27b
+uv run agent write --out output/roteiro.json     # usa o dossiê que acabou de gravar
 ```
 
 Se `llm-health` falhar com 404, o id de modelo padrão em `config.py` foi descontinuado —
@@ -98,9 +102,12 @@ uv run pytest && uv run ruff check .
   modelo por fonte** e URL estampada por nós — o modelo nunca informa a fonte. Dois
   portões determinísticos antes de o fato entrar: o trecho citado tem de existir
   literalmente na página, e todo número da afirmação tem de estar na fonte.
-- **Roteirista.** Produz um `Script` (contrato já existe e já é validado pelos testes do
-  M0): hook ≤1,5s, corpo, fechamento, 60–90s, `search_terms` **em inglês e em ordem
-  cronológica**. Toda afirmação factual ancorada num `Fact` do dossiê.
+- ~~**Roteirista**~~ **feito.** Produz um `Script` e corrige sozinho, em até três
+  tentativas, tudo que é mecânico: faixa de 150–225 palavras (= 60–90s), `search_terms` em
+  ASCII e em ordem cronológica, índice de fato existente no dossiê, número em dígito
+  ancorado. O modelo **aponta** o fato por índice e nunca o reescreve, então a afirmação
+  do roteiro continua rastreável à URL que o pesquisador estampou. Toda tentativa
+  reprovada fica gravada — é o que revela prompt fraco.
 - **Juiz.** Rubrica de 7 critérios, 0–2 cada, corte em 11/14, com até 2 rodadas de revisão:
   1. hook abre lacuna de informação nos primeiros 1,5s
   2. toda afirmação factual tem fonte no dossiê
@@ -197,6 +204,9 @@ medido, e não upgrade assumido.
   inglês e a afirmação sai em pt-BR: "retém 98,2% do desempenho" e *"retains 98.2% of
   performance"* não compartilham uma palavra. Só o número sobrevive à tradução — é por isso
   que o portão de ancoragem compara dígitos, e não texto.
+- **Defeito mecânico não é trabalho do juiz.** Contagem de palavra, termo com acento e
+  índice de fato inexistente são conferíveis sem rubrica. Mandar isso para o juiz gastaria
+  uma rodada de revisão (e cota) para descobrir o que um `len()` já sabia.
 - **Não pedir `source_url` ao modelo.** Fato real com fonte trocada parece ancorado, passa
   no juiz e só aparece quando alguém clica. Uma chamada por fonte, URL estampada por nós.
 - **Lista no topo do JSON não deve virar o primeiro elemento.** Se o modelo devolve

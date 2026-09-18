@@ -1,10 +1,11 @@
 """Memoria do agente em SQLite.
 
-Tres coisas distintas, e nao um armazem generico: a **serie de sinais** (do
-radar), o **ledger de temas** (do curador) e os **dossies** (do pesquisador).
-Cada uma responde a uma pergunta diferente -- "esta subindo?", "ja falamos
-disso?", "o que sabemos e de onde?" -- e misturar as tres numa tabela de
-documentos tornaria impossivel responder qualquer uma delas por SQL.
+Coisas distintas, e nao um armazem generico: a **serie de sinais** (do radar), o
+**ledger de temas** (do curador), os **dossies** (do pesquisador) e os
+**roteiros** (do roteirista). Cada uma responde a uma pergunta diferente --
+"esta subindo?", "ja falamos disso?", "o que sabemos e de onde?", "o que foi
+escrito e a que custo?" -- e misturar todas numa tabela de documentos tornaria
+impossivel responder qualquer uma delas por SQL.
 
 A serie de sinais e o que permite calcular velocidade
 para fontes que reportam nivel e nao taxa (Wikipedia, Google Trends). Sem
@@ -21,7 +22,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from agent.models import Decision, Dossier, Signal
+from agent.models import Decision, Dossier, Script, Signal
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS signals (
@@ -78,6 +79,29 @@ CREATE TABLE IF NOT EXISTS dossiers (
 );
 CREATE INDEX IF NOT EXISTS idx_dossiers_topic_created
     ON dossiers(topic, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS scripts (
+    id            INTEGER PRIMARY KEY,
+    topic         TEXT    NOT NULL,
+    model         TEXT    NOT NULL,
+    provider      TEXT    NOT NULL,
+    dossier_id    INTEGER,
+    word_count    INTEGER NOT NULL,
+    -- Quantas tentativas o roteirista precisou para passar nos portoes
+    -- mecanicos. Se toda execucao gasta duas, o defeito esta no prompt, nao no
+    -- modelo -- e isso so aparece se o numero for gravado tambem no sucesso.
+    attempts      INTEGER NOT NULL,
+    input_tokens  INTEGER NOT NULL,
+    output_tokens INTEGER NOT NULL,
+    latency_s     REAL    NOT NULL,
+    script_json   TEXT    NOT NULL,
+    -- Violacoes de cada tentativa, inclusive as que foram corrigidas.
+    attempts_json TEXT    NOT NULL,
+    created_at    TEXT    NOT NULL,
+    FOREIGN KEY (dossier_id) REFERENCES dossiers(id)
+);
+CREATE INDEX IF NOT EXISTS idx_scripts_topic_created
+    ON scripts(topic, created_at DESC);
 """
 
 
@@ -223,6 +247,61 @@ class SignalStore:
     def dossier_count(self) -> int:
         with self._conn() as conn:
             return int(conn.execute("SELECT COUNT(*) AS n FROM dossiers").fetchone()["n"])
+
+    def latest_dossier_id(self, topic: str | None = None) -> int | None:
+        """Id do dossie mais recente, para o roteiro apontar para a fonte dele."""
+        sql = "SELECT id FROM dossiers"
+        params: tuple = ()
+        if topic:
+            sql += " WHERE topic = ?"
+            params = (topic,)
+        sql += " ORDER BY created_at DESC, id DESC LIMIT 1"
+        with self._conn() as conn:
+            row = conn.execute(sql, params).fetchone()
+        return int(row["id"]) if row else None
+
+    # ------------------------------------------------------------------ roteiros
+
+    def record_script(
+        self,
+        script: Script,
+        *,
+        model: str,
+        provider: str,
+        usage: tuple[int, int],
+        latency_s: float,
+        attempts: list[dict],
+        dossier_id: int | None = None,
+    ) -> int:
+        with self._conn() as conn:
+            cur = conn.execute(
+                "INSERT INTO scripts (topic, model, provider, dossier_id, word_count,"
+                " attempts, input_tokens, output_tokens, latency_s, script_json,"
+                " attempts_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    script.topic, model, provider, dossier_id, script.word_count,
+                    len(attempts), usage[0], usage[1], latency_s,
+                    script.model_dump_json(),
+                    json.dumps(attempts, ensure_ascii=False),
+                    datetime.now(UTC).isoformat(),
+                ),
+            )
+        return int(cur.lastrowid or 0)
+
+    def latest_script(self, topic: str | None = None) -> Script | None:
+        sql = "SELECT script_json FROM scripts"
+        params: tuple = ()
+        if topic:
+            sql += " WHERE topic = ?"
+            params = (topic,)
+        sql += " ORDER BY created_at DESC, id DESC LIMIT 1"
+        with self._conn() as conn:
+            row = conn.execute(sql, params).fetchone()
+        return Script.model_validate_json(row["script_json"]) if row else None
+
+    def script_count(self) -> int:
+        with self._conn() as conn:
+            return int(conn.execute("SELECT COUNT(*) AS n FROM scripts").fetchone()["n"])
 
 
 def _parse_iso(value: str) -> datetime:

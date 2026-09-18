@@ -8,9 +8,10 @@ o [MoneyPrinterTurbo](https://github.com/harry0703/MoneyPrinterTurbo) (MIT) faz 
 bem. O que não existe é a metade de cima: **descobrir o que vale a pena falar, e provar
 que o que se fala é verdade.** É essa metade que este repositório constrói.
 
-> Estado atual: **M3 em andamento** — o agente escolhe o tema do dia e monta o
-> dossiê, com cada fato amarrado a uma URL e a um trecho conferido na própria
-> página. Falta o roteirista e o juiz. Veja [Marcos](#marcos).
+> Estado atual: **M3 em andamento** — o agente já vai do tema em alta ao MP4:
+> curador escolhe, pesquisador ancora cada fato numa URL, roteirista escreve na
+> faixa de monetização, renderizador produz. Falta o **juiz** com a rubrica.
+> Veja [Marcos](#marcos).
 
 ## Por que grounding com citação não é enfeite
 
@@ -79,7 +80,7 @@ O comando imprime as dimensões e a duração **medidas com `ffprobe`** e falha 
 sair em 1080x1920 ou fora da faixa de 60–90s. Aceite medido, não presumido.
 
 ```bash
-uv run pytest          # 236 testes, sem rede e sem chave de LLM
+uv run pytest          # 268 testes, sem rede e sem chave de LLM
 uv run ruff check .
 ```
 
@@ -277,6 +278,61 @@ o erro apareceria no meio de uma pesquisa, depois de gastar tempo lendo páginas
 Ele gasta uma chamada mínima e reporta quem respondeu, em quanto tempo e por
 quantos tokens — verifica o artefato, não a configuração.
 
+## O roteirista
+
+```bash
+uv run agent write --out output/roteiro.json
+uv run agent render --script output/roteiro.json     # fecha o ciclo
+```
+
+O estágio lê o último dossiê gravado e devolve um `Script` — o mesmo contrato que
+o M0 já renderiza, sem adaptação no meio.
+
+A separação que organiza o estágio: **o roteirista corrige o que é mecânico, o
+juiz julga o que é julgamento.** Contar palavra, conferir se o termo de busca
+está em ASCII, conferir se o índice de fato existe no dossiê, conferir se um
+número em dígito da narração está em algum fato — nada disso precisa de rubrica,
+e gastar uma rodada de revisão do juiz com erro de contagem é queimar cota de
+free tier. Então o roteirista tem seu próprio laço: até três tentativas, com o
+**defeito medido devolvido ao modelo em texto** ("a narração tem 90 palavras e
+precisa ter entre 150 e 225").
+
+Só chega ao juiz um roteiro que já passa em tudo que é verificável.
+
+### O modelo aponta o fato, não o reescreve
+
+O roteiro não recebe os fatos como texto para reaproveitar: recebe o dossiê
+**indexado**, e devolve `used_facts: [0, 2]`. Os `Fact` que vão para o `Script`
+são os objetos do dossiê, com a URL que o pesquisador estampou. Se o modelo
+pudesse redigir o fato, a afirmação do roteiro deixaria de ser rastreável ao que
+a fonte diz — que é todo o motivo de o dossiê existir.
+
+### A faixa de duração é requisito, não gosto
+
+Vídeo abaixo de 60s não é elegível ao Creator Rewards. A faixa é estimada aqui
+pelo ritmo de fala (2,5 palavras/s → 150 a 225 palavras) e **medida de verdade**
+só depois do TTS, pelo `ffprobe`, no aceite do renderizador. A estimativa serve
+para não gastar um render inteiro para descobrir que o texto era curto; a medida
+é a que manda.
+
+Um limite conhecido e assumido: o portão de números só vê o que está escrito em
+**dígito**. A narração boa escreve número por extenso para o TTS ("cinco vírgula
+nove gigabytes"), e conferir isso exigiria converter numeral em português de
+volta para dígito. Quem cobre esse caso é o critério 2 da rubrica do juiz, com o
+dossiê em mãos.
+
+### Todas as tentativas ficam gravadas
+
+Inclusive quando a primeira já passa. Se toda execução gasta duas rodadas no
+mesmo defeito, o problema está na instrução e não no modelo — e isso só aparece
+se o intervalo for registrado em vez de descartado no sucesso. A tabela
+`scripts` guarda o número de tentativas, as violações de cada uma, o custo em
+tokens e o `dossier_id` de origem.
+
+Esse vínculo com o dossiê é o que vai permitir, no M5, ligar retenção ao material
+que gerou o roteiro. Sem ele, "este vídeo foi melhor" nunca vira "esta fonte
+rende melhor".
+
 ## Marcos
 
 | | Marco | Estado |
@@ -284,7 +340,7 @@ quantos tokens — verifica o artefato, não a configuração.
 | M0 | Porta Renderer + aceite medido do MP4 | **concluído** |
 | M1 | Radar (HN, Trends, Wikipedia, GDELT) | **concluído** |
 | M2 | Curador: score, filtro de política, dedup por memória | **concluído** |
-| M3 | Pesquisador + roteirista + juiz com rubrica | **pesquisador concluído**; roteirista e juiz a fazer |
+| M3 | Pesquisador + roteirista + juiz com rubrica | **pesquisador e roteirista concluídos**; juiz a fazer |
 | M4 | Publicador (TikTok, inbox, rótulo AIGC) | a fazer |
 | M5 | Eval: free tier vs. modelo pago na mesma rubrica | a fazer |
 
@@ -317,6 +373,9 @@ Publicados aqui de propósito, não escondidos.
 - **O portão numérico não confere unidade nem contexto.** "5,9 GB" casa com uma
   página que diz "5,9 milhões de downloads". A alternativa seria pedir ao próprio
   modelo que se auditasse, o que não é verificação.
+- **O portão de números do roteirista só vê dígito.** Número inventado escrito
+  por extenso ("nove vezes menor") escapa dele; é o critério 2 da rubrica do juiz
+  que cobre esse caso.
 - **Não há busca web gratuita.** A descoberta de fontes depende do que o Trends
   RSS já associou, do link por trás do item do HN e do GDELT — que devolve 429 com
   frequência. Tema fora dessas três trilhas pode não render dossiê nenhum.

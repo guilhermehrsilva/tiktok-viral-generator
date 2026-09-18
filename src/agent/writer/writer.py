@@ -1,0 +1,334 @@
+"""Roteirista: de um dossie gravado para um Script pronto para o renderizador.
+
+O estagio tem duas metades de natureza diferente, e misturar as duas e o erro
+que este arquivo evita.
+
+A primeira e **julgamento**: hook que abre lacuna, ponto de vista proprio,
+portugues falado. Isso e trabalho do juiz (fatia 3), com rubrica, e nao da para
+decidir por regra.
+
+A segunda e **mecanica**: contar palavra, conferir se o termo de busca esta em
+ASCII, conferir se o indice de fato existe no dossie. Isso nao precisa de juiz
+nenhum, e gastar uma rodada de revisao do juiz com erro de contagem seria
+desperdicio de cota. Por isso o roteirista tem seu proprio laco de correcao, com
+o defeito medido devolvido ao modelo em texto, e so entrega ao juiz um roteiro
+que ja passa no que e verificavel.
+
+A faixa de duracao e requisito de monetizacao, nao gosto: video abaixo de 60s
+nao e elegivel ao Creator Rewards. Ela e estimada aqui pelo ritmo de fala
+(WORDS_PER_SECOND) e **medida de verdade** so depois do TTS, pelo renderizador --
+e e a medida que manda.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
+
+from pydantic import ValidationError
+
+from agent.models import (
+    MAX_DURATION_S,
+    MIN_DURATION_S,
+    WORDS_PER_SECOND,
+    Dossier,
+    Fact,
+    Script,
+)
+from agent.ports.llm import LLM, Completion, LLMError, Usage, parse_json_object
+from agent.research.grounding import canonical_numbers
+
+# Faixa de palavras que corresponde a faixa de duracao exigida.
+MIN_PALAVRAS = int(MIN_DURATION_S * WORDS_PER_SECOND)
+MAX_PALAVRAS = int(MAX_DURATION_S * WORDS_PER_SECOND)
+
+# Tentativas totais, contando a primeira. Duas correcoes bastam para defeito
+# mecanico; se o modelo nao acerta a contagem em tres tentativas, o problema nao
+# e a instrucao, e insistir so queima cota do free tier.
+MAX_TENTATIVAS = 3
+
+SISTEMA = (
+    "Voce e roteirista de um canal brasileiro de tech, IA e ciencia. Escreve para "
+    "ser ouvido, nao lido: frase curta, voz ativa, zero jargao nao explicado. "
+    "Voce so afirma o que esta no dossie que recebe. Numero que nao esta no "
+    "dossie nao entra no roteiro, nem como aproximacao."
+)
+
+SCHEMA_ROTEIRO: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "hook": {"type": "string"},
+        "body": {"type": "string"},
+        "closing": {"type": "string"},
+        "search_terms": {"type": "array", "items": {"type": "string"}},
+        "used_facts": {"type": "array", "items": {"type": "integer"}},
+    },
+    "required": ["hook", "body", "closing", "search_terms", "used_facts"],
+}
+
+
+@dataclass
+class Attempt:
+    """Uma tentativa e o que ela violou. Vazio significa que ela foi aceita."""
+
+    violations: list[str] = field(default_factory=list)
+    word_count: int = 0
+    usage: Usage = field(default_factory=Usage)
+    latency_s: float = 0.0
+
+
+@dataclass
+class WriteReport:
+    """O roteiro, as tentativas que precisaram acontecer, e o custo de todas.
+
+    As tentativas ficam gravadas porque elas dizem onde o prompt esta fraco: se
+    toda execucao gasta duas rodadas para acertar a contagem de palavras, o
+    defeito esta na instrucao, nao no modelo -- e isso so aparece se o intervalo
+    for registrado em vez de descartado no sucesso.
+    """
+
+    topic: str
+    script: Script | None = None
+    attempts: list[Attempt] = field(default_factory=list)
+    model: str = ""
+    provider: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return self.script is not None
+
+    @property
+    def usage(self) -> Usage:
+        total = Usage()
+        for a in self.attempts:
+            total = total + a.usage
+        return total
+
+    @property
+    def latency_s(self) -> float:
+        return round(sum(a.latency_s for a in self.attempts), 3)
+
+    @property
+    def violations(self) -> list[str]:
+        """Violacoes da ultima tentativa: o motivo de ter falhado."""
+        return self.attempts[-1].violations if self.attempts else []
+
+
+class Screenwriter:
+    def __init__(self, llm: LLM, max_attempts: int = MAX_TENTATIVAS):
+        self._llm = llm
+        self._max_attempts = max_attempts
+
+    def write(self, dossier: Dossier) -> WriteReport:
+        report = WriteReport(
+            topic=dossier.topic,
+            model=getattr(self._llm, "model", ""),
+            provider=getattr(self._llm, "provider", ""),
+        )
+        correcao: list[str] = []
+
+        for _ in range(self._max_attempts):
+            try:
+                resposta = self._llm.complete(
+                    build_prompt(dossier, correcao),
+                    system=SISTEMA,
+                    schema=SCHEMA_ROTEIRO,
+                    temperature=0.6,
+                    max_output_tokens=2048,
+                )
+            except LLMError:
+                # Cota estourada ou filtro de conteudo: nao ha o que corrigir no
+                # prompt, entao sobe para quem chamou. Defeito de forma na
+                # resposta e tratado em _avaliar, como violacao corrigivel.
+                raise
+
+            tentativa, script = self._avaliar(resposta, dossier)
+            report.attempts.append(tentativa)
+            if not tentativa.violations:
+                report.script = script
+                return report
+            correcao = tentativa.violations
+
+        return report
+
+    # ------------------------------------------------------------------ avaliacao
+
+    def _avaliar(self, resposta: Completion, dossier: Dossier) -> tuple[Attempt, Script | None]:
+        tentativa = Attempt(usage=resposta.usage, latency_s=resposta.latency_s)
+        if resposta.truncated:
+            tentativa.violations.append(
+                "a resposta foi cortada por limite de tokens; escreva mais curto"
+            )
+            return tentativa, None
+
+        try:
+            corpo = parse_json_object(resposta.text)
+        except LLMError as exc:
+            # Defeito de forma, nao de provedor: o laco conserta isso, e gastar
+            # uma rodada do juiz com JSON quebrado seria desperdicio de cota.
+            tentativa.violations.append(f"a resposta nao veio como objeto JSON: {exc}")
+            return tentativa, None
+
+        usados, fora = _resolver_fatos(corpo.get("used_facts"), dossier.facts)
+
+        try:
+            script = Script(
+                topic=dossier.topic,
+                hook=_texto(corpo.get("hook")),
+                body=_texto(corpo.get("body")),
+                closing=_texto(corpo.get("closing")),
+                search_terms=_termos(corpo.get("search_terms")),
+                facts=usados,
+            )
+        except ValidationError as exc:
+            tentativa.violations.extend(_violacoes_de_contrato(exc))
+            return tentativa, None
+
+        tentativa.word_count = script.word_count
+        tentativa.violations.extend(_violacoes_mecanicas(script, dossier, fora))
+        return tentativa, (script if not tentativa.violations else None)
+
+
+def _violacoes_mecanicas(script: Script, dossier: Dossier, fora: list[int]) -> list[str]:
+    """O que da para conferir sem julgamento. Texto vai de volta ao modelo."""
+    problemas: list[str] = []
+
+    if not (MIN_PALAVRAS <= script.word_count <= MAX_PALAVRAS):
+        alvo = (MIN_PALAVRAS + MAX_PALAVRAS) // 2
+        problemas.append(
+            f"a narracao tem {script.word_count} palavras "
+            f"(~{script.estimated_duration_s:.0f}s) e precisa ter entre {MIN_PALAVRAS} e "
+            f"{MAX_PALAVRAS} (entre {MIN_DURATION_S}s e {MAX_DURATION_S}s). "
+            f"Reescreva com cerca de {alvo} palavras."
+        )
+
+    if fora:
+        problemas.append(
+            f"used_facts aponta indice que nao existe no dossie: {fora}. "
+            f"Os indices validos vao de 0 a {len(dossier.facts) - 1}."
+        )
+    if not script.facts:
+        problemas.append(
+            "used_facts esta vazio: todo roteiro precisa apoiar-se em pelo menos "
+            "um fato do dossie, com fonte."
+        )
+
+    soltos = _numeros_sem_dossie(script, dossier)
+    if soltos:
+        problemas.append(
+            f"a narracao cita numero que nao esta no dossie: {', '.join(soltos)}. "
+            "Use so os numeros dos fatos, sem converter unidade e sem arredondar."
+        )
+
+    return problemas
+
+
+def _numeros_sem_dossie(script: Script, dossier: Dossier) -> list[str]:
+    """Numero em digito na narracao precisa estar em algum fato do dossie.
+
+    Limite conhecido: pega so o que esta escrito em digito. A narracao boa
+    escreve numero por extenso para o TTS ("cinco virgula nove gigabytes"), e
+    conferir isso exigiria converter numeral em portugues de volta para digito.
+    Quem cobre esse caso e o criterio 2 da rubrica do juiz, com o dossie em maos
+    -- este portao so garante que o barato de conferir nunca passe errado.
+    """
+    no_dossie = set()
+    for f in dossier.facts:
+        no_dossie.update(canonical_numbers(f.claim))
+        no_dossie.update(canonical_numbers(f.quote))
+
+    vistos: list[str] = []
+    for numero in canonical_numbers(script.narration):
+        if numero not in no_dossie and numero not in vistos:
+            vistos.append(numero)
+    return vistos
+
+
+def _resolver_fatos(indices: object, facts: list[Fact]) -> tuple[list[Fact], list[int]]:
+    """Traduz os indices que o modelo devolveu em fatos do dossie.
+
+    O modelo aponta, nunca copia: se ele pudesse reescrever o fato, a afirmacao
+    do roteiro deixaria de ser rastreavel ao que a fonte diz -- que e todo o
+    ponto de o dossie existir.
+    """
+    if not isinstance(indices, list):
+        return [], []
+
+    usados: list[Fact] = []
+    fora: list[int] = []
+    for bruto in indices:
+        if isinstance(bruto, bool) or not isinstance(bruto, int):
+            continue
+        if 0 <= bruto < len(facts):
+            if facts[bruto] not in usados:
+                usados.append(facts[bruto])
+        else:
+            fora.append(bruto)
+    return usados, fora
+
+
+def _violacoes_de_contrato(exc: ValidationError) -> list[str]:
+    saida: list[str] = []
+    for erro in exc.errors():
+        campo = ".".join(str(p) for p in erro["loc"]) or "roteiro"
+        saida.append(f"o campo {campo} nao respeita o contrato: {erro['msg']}")
+    return saida
+
+
+def build_prompt(dossier: Dossier, correcoes: list[str] | None = None) -> str:
+    """Monta o prompt do roteiro. Funcao livre para o teste inspecionar o texto."""
+    fatos = "\n".join(
+        f"[{i}] {f.claim}\n    fonte: {f.source_name}"
+        + (f'\n    trecho: "{f.quote}"' if f.quote else "")
+        for i, f in enumerate(dossier.facts)
+    )
+    alvo = (MIN_PALAVRAS + MAX_PALAVRAS) // 2
+
+    partes = [
+        f"TEMA: {dossier.topic}\n",
+        f"DOSSIE (use o indice para citar):\n{fatos}\n",
+        "TAREFA\n"
+        "Escreva um roteiro de video vertical em portugues do Brasil, para ser "
+        "narrado. Devolva:\n"
+        "- hook: a abertura. A PRIMEIRA FRASE precisa abrir uma lacuna de "
+        "informacao e nao responde-la -- e o que decide se a pessoa continua "
+        "assistindo. Nada de 'hoje eu vou falar sobre'.\n"
+        "- body: o desenvolvimento. Todo dado vem de um fato do dossie.\n"
+        "- closing: o fechamento com PONTO DE VISTA PROPRIO. Nao e resumo do que "
+        "foi dito. O melhor fechamento aponta o que as fontes NAO dizem, ou a "
+        "pergunta que elas deixam sem resposta, e devolve isso ao espectador. "
+        "Encerre com uma chamada que nao seja 'siga para mais'.\n"
+        "- search_terms: de 4 a 8 termos de busca de video de banco de imagens, "
+        "EM INGLES, na ordem cronologica da narracao -- o material do primeiro "
+        "termo abre o video. Cada termo e uma cena filmavel e concreta "
+        "('server rack blue lights'), nunca um conceito abstrato ('innovation').\n"
+        "- used_facts: os indices dos fatos do dossie em que o roteiro se apoia.\n",
+        "REGRAS\n"
+        f"- A narracao inteira (hook + body + closing) precisa ter entre "
+        f"{MIN_PALAVRAS} e {MAX_PALAVRAS} palavras, ou seja cerca de {alvo}. "
+        f"Isso equivale a {MIN_DURATION_S}-{MAX_DURATION_S}s falados e e "
+        "requisito de monetizacao, nao preferencia.\n"
+        "- Escreva numero por extenso quando ficar melhor de ouvir "
+        "('cinco virgula nove gigabytes'), mas nunca mude o valor.\n"
+        "- Nao invente numero, nome, data nem citacao. Se o dossie nao diz, o "
+        "roteiro nao afirma.\n"
+        "- Sem emoji, sem hashtag, sem marcacao de cena. So o que sera falado.",
+    ]
+
+    if correcoes:
+        partes.append(
+            "CORRIJA A TENTATIVA ANTERIOR\n"
+            + "\n".join(f"- {c}" for c in correcoes)
+            + "\nMantenha o que estava bom e conserte apenas o apontado."
+        )
+    return "\n".join(partes)
+
+
+def _texto(valor: object) -> str:
+    return " ".join(str(valor).split()) if isinstance(valor, str) else ""
+
+
+def _termos(valor: object) -> list[str]:
+    if not isinstance(valor, list):
+        return []
+    return [" ".join(str(t).split()) for t in valor if isinstance(t, str) and t.strip()]
