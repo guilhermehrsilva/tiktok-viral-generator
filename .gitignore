@@ -1,0 +1,22 @@
+# Ambiente
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# O renderizador (MoneyPrinterTurbo) e clonado por scripts/setup_renderer.sh.
+# Nao versionamos: e dependencia externa, nao codigo nosso.
+.renderer/
+
+# Segredos e configuracao local
+.env
+config.local.toml
+
+# Artefatos de execucao
+storage/
+data/*.db
+data/*.db-journal
+*.mp4
+*.mp3
+*.srt
