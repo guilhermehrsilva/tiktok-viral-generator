@@ -59,8 +59,18 @@ o código — as decisões e os fatos externos que explicam por que ele é assim
 - **Só `BeVietnamPro-Bold.ttf` cobre os acentos do pt-BR** entre as fontes do MPT; as
   outras são chinesas ou vietnamitas e renderizam tofu no lugar de "ç" e "ã".
 - **Segredos só no `.env`** (git-ignored). O `setup_renderer.sh` é versionado.
+- **`content_tokens` tinha piso de 3 caracteres e matava "ai" e "ia".** Os dois termos mais
+  centrais do léxico do nicho sumiam antes da comparação, e o recall do portão era 2/20.
+  O nicho tokeniza com piso 2; a deduplicação mantém 3.
+- **O plano previa embeddings para dedup; não use.** `sentence-transformers` arrasta >1,5 GB
+  de CUDA numa máquina sem GPU NVIDIA. A implementação é lexical atrás da porta
+  `Deduplicator`, e trocar é um experimento mensurável, não um upgrade óbvio.
+- **Calibração do nicho é travada por teste** contra os 20 títulos reais em
+  `tests/fixtures/radar/hacker_news.json`. Mexer no léxico sem rodar esse teste regride o
+  recall em silêncio.
 
 ## Estado
 
-M0 concluído: a porta `Renderer` fecha o caminho de produção a custo zero, com aceite
-medido no artefato (1080x1920, 60–90s, trilha de áudio presente). M1 a M5 no plano.
+M2 concluído. O agente coleta de quatro fontes gratuitas, escolhe um tema do dia com
+justificativa gravada, e produz o MP4 vertical a custo zero. Falta o miolo: pesquisa com
+citação, roteiro, juiz (M3), publicação (M4) e eval (M5).

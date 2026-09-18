@@ -8,8 +8,8 @@ o [MoneyPrinterTurbo](https://github.com/harry0703/MoneyPrinterTurbo) (MIT) faz 
 bem. O que não existe é a metade de cima: **descobrir o que vale a pena falar, e provar
 que o que se fala é verdade.** É essa metade que este repositório constrói.
 
-> Estado atual: **M1 concluído** — o radar coleta e mede; o pipeline de produção
-> fecha a custo zero. Veja [Marcos](#marcos).
+> Estado atual: **M2 concluído** — o agente já escolhe sozinho um tema do dia,
+> com justificativa gravada. Veja [Marcos](#marcos).
 
 ## Por que grounding com citação não é enfeite
 
@@ -140,13 +140,51 @@ primeira coleta** (`points` + `created_at_i`). As outras reportam nível, não t
 precisam de duas coletas para dizer qualquer coisa sobre movimento — a série fica em
 SQLite.
 
+## O curador
+
+```bash
+uv run agent curate
+```
+
+Três portões em ordem, do mais barato para o mais caro, e só depois o score:
+
+1. **Política** — bloqueia antes de qualquer cálculo. Tema vetado não pode ganhar no
+   ranking por estar subindo rápido. Guarda saúde/medicamento, política partidária,
+   tragédia com vítima e menores.
+2. **Nicho** — portão, não tempero. Termo fora de tech/IA/ciência é descartado mesmo com
+   velocidade altíssima.
+3. **Duplicata** — só entre os que sobraram, porque comparar com o ledger custa.
+
+O score só é calculado entre os sobreviventes. Velocidade e volume entram como
+**percentil dentro da própria fonte**: ponto do Hacker News e pageview da Wikipedia não
+compartilham escala, e somar os números crus faria a Wikipedia vencer sempre por ter
+unidade maior — não por ter assunto melhor.
+
+**Toda decisão é gravada com motivo, inclusive as rejeitadas.** Sem isso só se sabe o que
+foi escolhido, nunca o que foi perdido, e calibrar o score vira chute.
+
+### Deduplicação: lexical, atrás de uma porta
+
+O plano previa embeddings locais via `sentence-transformers`. Medido em 18/09/2026: aquele
+pacote arrasta o torch com a stack CUDA inteira — cudnn 527 MB, nccl 206 MB, cufft 204 MB,
+cusolver 191 MB — mais de 1,5 GB de bibliotecas NVIDIA numa máquina **sem GPU NVIDIA**. A
+variante CPU-only não terminou de instalar em 7 minutos.
+
+O que a deduplicação precisa pegar aqui é majoritariamente lexical: a mesma matéria por
+fontes diferentes, ou o mesmo lançamento reformulado. Jaccard sobre tokens de conteúdo
+resolve, de forma determinística e testável, sem download e sem modelo.
+
+O que ele **não** pega é paráfrase sem palavra em comum. Essa é a lacuna que justificaria
+embeddings — e, por estar atrás da porta `Deduplicator`, trocar a técnica e medir contra a
+mesma base de temas é barato. É o tipo de evidência que o M5 produz.
+
 ## Marcos
 
 | | Marco | Estado |
 |---|---|---|
 | M0 | Porta Renderer + aceite medido do MP4 | **concluído** |
 | M1 | Radar (HN, Trends, Wikipedia, GDELT) | **concluído** |
-| M2 | Curador: score, filtro de política, dedup por memória | a fazer |
+| M2 | Curador: score, filtro de política, dedup por memória | **concluído** |
 | M3 | Pesquisador + roteirista + juiz com rubrica | a fazer |
 | M4 | Publicador (TikTok, inbox, rótulo AIGC) | a fazer |
 | M5 | Eval: free tier vs. modelo pago na mesma rubrica | a fazer |

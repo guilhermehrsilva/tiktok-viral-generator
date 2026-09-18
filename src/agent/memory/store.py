@@ -11,10 +11,10 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from agent.models import Signal
+from agent.models import Decision, Signal
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS signals (
@@ -30,6 +30,22 @@ CREATE TABLE IF NOT EXISTS signals (
 );
 -- A consulta quente e "ultima observacao desta chave antes de agora".
 CREATE INDEX IF NOT EXISTS idx_signals_key_seen ON signals(key, seen_at DESC);
+
+CREATE TABLE IF NOT EXISTS topics (
+    id          INTEGER PRIMARY KEY,
+    term        TEXT    NOT NULL,
+    source      TEXT    NOT NULL,
+    verdict     TEXT    NOT NULL,
+    reason      TEXT    NOT NULL,
+    score       REAL    NOT NULL,
+    niche_fit   REAL    NOT NULL,
+    url         TEXT,
+    duplicate_of TEXT,
+    decided_at  TEXT    NOT NULL
+);
+-- O ledger e sempre lido por "temas aprovados recentemente", nunca inteiro.
+CREATE INDEX IF NOT EXISTS idx_topics_verdict_decided
+    ON topics(verdict, decided_at DESC);
 """
 
 
@@ -82,6 +98,49 @@ class SignalStore:
         with self._conn() as conn:
             return int(conn.execute("SELECT COUNT(*) AS n FROM signals").fetchone()["n"])
 
+    # ------------------------------------------------------------ ledger de temas
+
+    def record_decisions(self, decisions: Iterable[Decision]) -> int:
+        """Grava toda decisao, aprovada ou nao.
+
+        Rejeicao gravada e o que permite calibrar o score depois em vez de
+        chutar: sem ela, so se sabe o que foi escolhido, nunca o que foi perdido.
+        """
+        rows = [
+            (d.term, d.source, d.verdict.value, d.reason, d.score, d.niche_fit,
+             str(d.url) if d.url else None, d.duplicate_of, d.decided_at.isoformat())
+            for d in decisions
+        ]
+        if not rows:
+            return 0
+        with self._conn() as conn:
+            conn.executemany(
+                "INSERT INTO topics (term, source, verdict, reason, score, niche_fit,"
+                " url, duplicate_of, decided_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                rows,
+            )
+        return len(rows)
+
+    def recent_topics(self, days: int = 30, limit: int = 500) -> list[str]:
+        """Temas ja aprovados, para o deduplicador comparar.
+
+        So os aprovados entram: um tema rejeitado por politica ou por nicho nao
+        "ja foi coberto" -- ele nunca virou video, e bloquear o parecido seria
+        estender o veto a assuntos que nunca foram julgados.
+        """
+        corte = (datetime.now(UTC) - timedelta(days=days)).isoformat()
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT term FROM topics WHERE verdict = 'selected' AND decided_at >= ?"
+                " ORDER BY decided_at DESC LIMIT ?",
+                (corte, limit),
+            ).fetchall()
+        return [r["term"] for r in rows]
+
+    def topic_count(self) -> int:
+        with self._conn() as conn:
+            return int(conn.execute("SELECT COUNT(*) AS n FROM topics").fetchone()["n"])
+
 
 def _parse_iso(value: str) -> datetime:
     dt = datetime.fromisoformat(value)
@@ -89,3 +148,4 @@ def _parse_iso(value: str) -> datetime:
     # vir sem tzinfo. Comparar naive com aware levanta TypeError no meio da
     # coleta, entao assume-se UTC, que e o que o agente sempre grava.
     return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+

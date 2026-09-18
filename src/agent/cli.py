@@ -118,6 +118,70 @@ def radar(
 
 
 @app.command()
+def curate(
+    show: int = typer.Option(8, "--show", help="quantos rejeitados detalhar"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="nao grava no ledger"),
+) -> None:
+    """Coleta sinais e escolhe UM tema, registrando o motivo de cada decisao."""
+    from agent.curator.curator import Curator
+    from agent.memory.store import SignalStore
+    from agent.models import Verdict
+    from agent.radar.collector import Radar, default_sources
+
+    settings.ensure_dirs()
+    store = SignalStore(settings.db_path)
+
+    coleta = Radar(default_sources(), store).collect()
+    for nome, erro in coleta.failures.items():
+        typer.secho(f"[fonte fora] {nome}: {erro}", fg=typer.colors.YELLOW)
+    if not coleta.signals:
+        typer.secho("nenhum sinal coletado", fg=typer.colors.RED)
+        raise typer.Exit(code=1)
+
+    ledger = store.recent_topics()
+    report = Curator().curate(coleta.signals, ledger=ledger)
+
+    contagem = report.tally()
+    typer.echo("")
+    typer.echo(f"{len(coleta.signals)} sinais -> "
+               + "  ".join(f"{k}={v}" for k, v in contagem.items() if v))
+    typer.echo(f"ledger: {len(ledger)} temas ja aprovados nos ultimos 30 dias")
+
+    for verdict, cor in ((Verdict.rejected_policy, typer.colors.RED),
+                         (Verdict.rejected_duplicate, typer.colors.YELLOW)):
+        for d in report.by_verdict(verdict)[:show]:
+            typer.secho(f"  [{verdict.value}] {d.term[:52]}", fg=cor)
+            typer.secho(f"      {d.reason}", fg=typer.colors.BRIGHT_BLACK)
+
+    escolhido = report.selected
+    if escolhido is None:
+        typer.secho("\nnenhum tema elegivel hoje", fg=typer.colors.RED)
+        if not dry_run:
+            store.record_decisions(report.decisions)
+        raise typer.Exit(code=1)
+
+    typer.echo("")
+    typer.secho(f"TEMA: {escolhido.term}", fg=typer.colors.GREEN, bold=True)
+    typer.echo(f"  {escolhido.reason}")
+    if escolhido.url:
+        typer.echo(f"  {escolhido.url}")
+    if escolhido.news_items:
+        typer.echo(f"  {len(escolhido.news_items)} materias ja associadas pela fonte")
+
+    vice = [d for d in report.by_verdict(Verdict.not_selected)][:4]
+    if vice:
+        typer.echo("\n  proximos colocados:")
+        for d in vice:
+            typer.echo(f"    {d.score:.3f}  {d.term[:58]}")
+
+    if dry_run:
+        typer.secho("\n--dry-run: nada gravado no ledger", fg=typer.colors.YELLOW)
+    else:
+        n = store.record_decisions(report.decisions)
+        typer.echo(f"\n{n} decisoes gravadas no ledger")
+
+
+@app.command()
 def health() -> None:
     """Verifica se o renderizador esta de pe."""
     alive = MptRenderer().health()

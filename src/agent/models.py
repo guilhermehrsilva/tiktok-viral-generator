@@ -195,3 +195,50 @@ class Signal(BaseModel):
     @property
     def has_velocity(self) -> bool:
         return self.velocity is not None
+
+
+class Verdict(StrEnum):
+    """Desfecho de um candidato no curador.
+
+    Rejeicao tem tipo, nao so um booleano: "reprovou na politica" e "perdeu o
+    ranking" pedem acoes opostas. O primeiro nunca deve voltar; o segundo pode
+    ser o escolhido amanha.
+    """
+
+    selected = "selected"
+    rejected_policy = "rejected_policy"
+    rejected_niche = "rejected_niche"
+    rejected_duplicate = "rejected_duplicate"
+    not_selected = "not_selected"
+
+
+class Decision(BaseModel):
+    """O que o curador decidiu sobre um sinal, e por que.
+
+    `reason` e obrigatorio inclusive na aprovacao. Decisao sem justificativa
+    gravada nao da para auditar depois, e a auditoria e o que permite corrigir o
+    score em vez de chutar.
+    """
+
+    term: str = Field(min_length=2)
+    source: str
+    verdict: Verdict
+    reason: str = Field(min_length=3)
+    score: float = Field(ge=0, le=1)
+    niche_fit: float = Field(ge=0, le=1)
+    velocity: float | None = None
+    volume: float = 0.0
+    url: HttpUrl | None = None
+    duplicate_of: str | None = None
+    decided_at: datetime
+    news_items: list[NewsItem] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _duplicata_aponta_o_original(self) -> Decision:
+        if self.verdict is Verdict.rejected_duplicate and not self.duplicate_of:
+            raise ValueError("rejeicao por duplicata precisa apontar o tema original")
+        return self
+
+    @property
+    def approved(self) -> bool:
+        return self.verdict is Verdict.selected
