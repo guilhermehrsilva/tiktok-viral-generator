@@ -80,6 +80,44 @@ def render(
 
 
 @app.command()
+def radar(
+    limit: int = typer.Option(15, "--limit", "-n", help="quantos sinais listar"),
+) -> None:
+    """Coleta sinais de tendencia das fontes gratuitas e grava a serie."""
+    from agent.memory.store import SignalStore
+    from agent.radar.collector import Radar, default_sources
+
+    settings.ensure_dirs()
+    report = Radar(default_sources(), SignalStore(settings.db_path)).collect()
+
+    for nome, erro in report.failures.items():
+        typer.secho(f"[fonte fora] {nome}: {erro}", fg=typer.colors.YELLOW)
+
+    if not report.signals:
+        typer.secho("nenhum sinal coletado", fg=typer.colors.RED)
+        raise typer.Exit(code=1)
+
+    # Ordena por velocidade; sem velocidade vai para o fim, porque "desconhecido"
+    # nao pode competir de igual para igual com uma medida.
+    ordenados = sorted(
+        report.signals, key=lambda s: (s.has_velocity, s.velocity or 0), reverse=True
+    )
+
+    typer.echo("")
+    typer.echo(f"{'velocidade':>12}  {'volume':>10}  {'fonte':<14}  termo")
+    typer.echo("-" * 92)
+    for s in ordenados[:limit]:
+        vel = f"{s.velocity:,.1f}/h" if s.has_velocity else "-"
+        typer.echo(f"{vel:>12}  {s.volume:>10,.0f}  {s.source:<14}  {s.term[:44]}")
+
+    typer.echo("")
+    typer.echo(f"{len(report.signals)} sinais de {len(report.sources_ok)} fontes "
+               f"({len(report.with_velocity)} com velocidade) em {report.elapsed_s}s")
+    if report.failures:
+        typer.echo(f"{len(report.failures)} fonte(s) fora; a coleta seguiu sem elas")
+
+
+@app.command()
 def health() -> None:
     """Verifica se o renderizador esta de pe."""
     alive = MptRenderer().health()

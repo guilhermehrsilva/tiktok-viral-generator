@@ -8,8 +8,8 @@ o [MoneyPrinterTurbo](https://github.com/harry0703/MoneyPrinterTurbo) (MIT) faz 
 bem. O que não existe é a metade de cima: **descobrir o que vale a pena falar, e provar
 que o que se fala é verdade.** É essa metade que este repositório constrói.
 
-> Estado atual: **M0 concluído** — o pipeline de produção fecha a custo zero.
-> Veja [Marcos](#marcos).
+> Estado atual: **M1 concluído** — o radar coleta e mede; o pipeline de produção
+> fecha a custo zero. Veja [Marcos](#marcos).
 
 ## Por que grounding com citação não é enfeite
 
@@ -110,12 +110,42 @@ dependência do MoviePy, traz um binário estático com `libx264`, e o
 `utils.get_ffmpeg_binary()` do MPT honra `IMAGEIO_FFMPEG_EXE` antes do PATH. Nenhuma
 linha do código dele é modificada.
 
+## O radar
+
+```bash
+uv run agent radar
+```
+
+Quatro fontes gratuitas, rodando em ~19s. Cada uma falha isolada: a janela de um trend é
+de horas, então nenhuma fonte fora do ar derruba a coleta.
+
+| Fonte | Unidade | Velocidade | Papel |
+|---|---|---|---|
+| Hacker News (Algolia) | `points` | **nativa** — `points / idade` | primária do nicho |
+| Google Trends RSS | `searches` | por diferença | cobertura Brasil + matérias já associadas |
+| Wikipedia pageviews | `pageviews` | por diferença | confirma interesse real em pt |
+| GDELT DOC 2.0 | `articles` | por diferença | cobertura global, com disjuntor |
+
+O radar **não normaliza** as unidades numa nota única. Pontos do HN e pageviews da
+Wikipedia não são comparáveis, e converter escalas diferentes num número só é julgamento —
+julgamento é trabalho do curador (M2). O radar coleta e mede.
+
+A única grandeza comparável em forma é a **velocidade**, porque é sempre a mesma derivada:
+unidade por hora. Ela é `None` quando desconhecida, nunca zero — `None` significa "não
+medi" e zero significaria "medi e não se moveu", que são afirmações diferentes e levam a
+decisões diferentes.
+
+O Hacker News é a fonte primária porque é a única gratuita que entrega velocidade **já na
+primeira coleta** (`points` + `created_at_i`). As outras reportam nível, não taxa, e
+precisam de duas coletas para dizer qualquer coisa sobre movimento — a série fica em
+SQLite.
+
 ## Marcos
 
 | | Marco | Estado |
 |---|---|---|
 | M0 | Porta Renderer + aceite medido do MP4 | **concluído** |
-| M1 | Radar (HN, Trends, Wikipedia, YouTube, GDELT) | a fazer |
+| M1 | Radar (HN, Trends, Wikipedia, GDELT) | **concluído** |
 | M2 | Curador: score, filtro de política, dedup por memória | a fazer |
 | M3 | Pesquisador + roteirista + juiz com rubrica | a fazer |
 | M4 | Publicador (TikTok, inbox, rótulo AIGC) | a fazer |

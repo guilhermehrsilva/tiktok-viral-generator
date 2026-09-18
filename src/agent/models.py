@@ -145,3 +145,53 @@ class RenderResult(BaseModel):
         if self.duration_s is None:
             return False
         return MIN_DURATION_S <= self.duration_s <= MAX_DURATION_S
+
+
+class NewsItem(BaseModel):
+    """Materia ja associada a um termo pela propria fonte.
+
+    O Google Trends RSS entrega isso de graca junto de cada tema, o que adianta
+    parte do trabalho do pesquisador (M3) sem custar uma requisicao a mais.
+    """
+
+    title: str = Field(min_length=3)
+    url: HttpUrl
+    source_name: str = ""
+
+
+class Signal(BaseModel):
+    """Um termo em alta, como uma fonte o reporta.
+
+    `volume` esta sempre na unidade nativa da fonte -- pontos do HN, buscas
+    estimadas do Trends, pageviews da Wikipedia. Nao sao comparaveis entre si e
+    o radar nao tenta normalizar: converter escalas diferentes numa nota unica e
+    julgamento, e julgamento e trabalho do curador (M2). O radar so coleta e
+    mede.
+
+    `velocity` e a unica grandeza comparavel em forma, porque e sempre a mesma
+    derivada: unidade por hora. Fica `None` quando a fonte nao permite calcula-la
+    -- e `None` significa "desconhecido", nunca zero.
+    """
+
+    term: str = Field(min_length=2)
+    source: str = Field(min_length=2)
+    volume: float = Field(ge=0)
+    unit: str = Field(min_length=1)
+    velocity: float | None = None
+    seen_at: datetime
+    url: HttpUrl | None = None
+    news_items: list[NewsItem] = Field(default_factory=list)
+
+    @field_validator("term")
+    @classmethod
+    def _termo_normalizado(cls, v: str) -> str:
+        return " ".join(v.split()).strip()
+
+    @property
+    def key(self) -> str:
+        """Chave estavel para casar a mesma historia entre coletas."""
+        return f"{self.source}:{self.term.casefold()}"
+
+    @property
+    def has_velocity(self) -> bool:
+        return self.velocity is not None
