@@ -113,6 +113,144 @@ class Script(BaseModel):
         raise NotImplementedError("verificacao de fonte e responsabilidade do juiz (M3)")
 
 
+class Criterion(StrEnum):
+    """Os sete critérios da rubrica do juiz.
+
+    Sao StrEnum e nao string livre porque a rubrica e um contrato: o eval do M5
+    compara provedores criterio a criterio, e nota gravada com o nome do
+    criterio escrito de duas formas nao se agrega.
+    """
+
+    hook = "hook"
+    fonte = "fonte"
+    duracao = "duracao"
+    ponto_de_vista = "ponto_de_vista"
+    politica = "politica"
+    pt_br = "pt_br"
+    cta = "cta"
+
+
+# Corte da rubrica: 7 critérios, 0 a 2 cada.
+RUBRIC_CUTOFF = 11
+RUBRIC_MAX = 2 * len(Criterion)
+
+# Critérios que reprovam por exigência, e não por qualidade -- nota alta nos
+# outros nao compra aprovacao aqui. Fonte e duracao sao requisito do Creator
+# Rewards; politica e risco para o canal inteiro.
+VETO_MINIMO: dict[Criterion, int] = {
+    Criterion.fonte: 2,
+    Criterion.duracao: 2,
+    Criterion.politica: 2,
+}
+
+
+class CriterionScore(BaseModel):
+    """A nota de um critério e a razão dela.
+
+    `reason` e obrigatorio inclusive no 2. Nota sem justificativa nao da para
+    auditar nem para devolver ao roteirista como correcao, e a revisao vira
+    "tente de novo".
+    """
+
+    criterion: Criterion
+    score: int = Field(ge=0, le=2)
+    reason: str = Field(min_length=3)
+    # True quando a nota saiu de medicao nossa, nao do julgamento do modelo.
+    measured: bool = False
+    # False quando o parecer foi interrompido antes deste criterio: o roteiro ja
+    # havia reprovado num criterio medido, e pagar o parecer do modelo seria cota
+    # gasta para confirmar uma reprovacao ja decidida. Zero aqui significa "nao
+    # sei", nao "ruim" -- e a distincao importa: nota nao avaliada nao volta ao
+    # roteirista como correcao.
+    evaluated: bool = True
+
+
+class Review(BaseModel):
+    """O parecer do juiz sobre um roteiro."""
+
+    topic: str
+    scores: list[CriterionScore]
+    reviewed_at: datetime
+    model: str = ""
+    provider: str = ""
+
+    @model_validator(mode="after")
+    def _rubrica_completa(self) -> Review:
+        vistos = [s.criterion for s in self.scores]
+        if len(vistos) != len(set(vistos)):
+            raise ValueError("rubrica com criterio repetido")
+        faltando = set(Criterion) - set(vistos)
+        if faltando:
+            raise ValueError(
+                "parecer incompleto, falta: "
+                + ", ".join(sorted(c.value for c in faltando))
+            )
+        return self
+
+    @property
+    def total(self) -> int:
+        return sum(s.score for s in self.scores)
+
+    @property
+    def by_criterion(self) -> dict[Criterion, CriterionScore]:
+        return {s.criterion: s for s in self.scores}
+
+    @property
+    def vetoed(self) -> list[CriterionScore]:
+        """Critérios de exigência que ficaram abaixo do mínimo.
+
+        So os que estao em VETO_MINIMO. Criterio de qualidade zerado tambem
+        reprova, mas por outra regra (`zeroed`) -- chamar os dois de veto faria a
+        mensagem dizer que hook e requisito de monetizacao, o que e falso.
+        """
+        return [
+            s for s in self.scores
+            if s.criterion in VETO_MINIMO and s.score < VETO_MINIMO[s.criterion]
+        ]
+
+    @property
+    def zeroed(self) -> list[CriterionScore]:
+        return [s for s in self.scores if s.score == 0 and s.evaluated]
+
+    @property
+    def short_circuited(self) -> bool:
+        """True quando a medida reprovou antes de o modelo ser consultado.
+
+        `total` de um parecer interrompido nao e comparavel com o de um parecer
+        completo -- o eval do M5 precisa filtrar por isto antes de agregar nota.
+        """
+        return any(not s.evaluated for s in self.scores)
+
+    @property
+    def approved(self) -> bool:
+        """Corte em 11/14, nenhum critério zerado, e nenhum veto violado.
+
+        As tres condicoes existem porque soma sozinha permite compensacao
+        errada: um roteiro que e resumo de noticia (0 em ponto de vista) chegaria
+        a 12 de 14 com o resto perfeito e passaria -- sendo exatamente o "AI
+        slop" que desmonetiza o canal.
+        """
+        return (
+            self.total >= RUBRIC_CUTOFF
+            and not self.zeroed
+            and not self.vetoed
+        )
+
+    @property
+    def revision_notes(self) -> list[str]:
+        """O que devolver ao roteirista, na ordem em que custa mais caro.
+
+        Veto primeiro: nao adianta melhorar o hook de um roteiro que cita
+        numero sem fonte.
+        """
+        veto = {s.criterion for s in self.vetoed}
+        ordenados = sorted(
+            (s for s in self.scores if s.score < 2 and s.evaluated),
+            key=lambda s: (s.criterion not in veto, s.score),
+        )
+        return [f"[{s.criterion.value} {s.score}/2] {s.reason}" for s in ordenados]
+
+
 class RenderState(StrEnum):
     processing = "processing"
     complete = "complete"

@@ -8,10 +8,10 @@ o [MoneyPrinterTurbo](https://github.com/harry0703/MoneyPrinterTurbo) (MIT) faz 
 bem. O que não existe é a metade de cima: **descobrir o que vale a pena falar, e provar
 que o que se fala é verdade.** É essa metade que este repositório constrói.
 
-> Estado atual: **M3 em andamento** — o agente já vai do tema em alta ao MP4:
+> Estado atual: **M3 concluído** — o agente vai do tema em alta ao MP4 sozinho:
 > curador escolhe, pesquisador ancora cada fato numa URL, roteirista escreve na
-> faixa de monetização, renderizador produz. Falta o **juiz** com a rubrica.
-> Veja [Marcos](#marcos).
+> faixa de monetização, juiz aplica a rubrica de 7 critérios e devolve para
+> revisão, renderizador produz. Veja [Marcos](#marcos).
 
 ## Por que grounding com citação não é enfeite
 
@@ -80,9 +80,22 @@ O comando imprime as dimensões e a duração **medidas com `ffprobe`** e falha 
 sair em 1080x1920 ou fora da faixa de 60–90s. Aceite medido, não presumido.
 
 ```bash
-uv run pytest          # 268 testes, sem rede e sem chave de LLM
+uv run pytest          # 322 testes, sem rede e sem chave de LLM
 uv run ruff check .
 ```
+
+### O ciclo inteiro
+
+```bash
+uv run agent curate                            # escolhe o tema do dia
+uv run agent research                          # 3-5 fontes, cada fato com URL
+uv run agent produce --out output/roteiro.json # escreve, julga, revisa
+uv run agent render --script output/roteiro.json
+```
+
+Do `research` em diante é preciso uma chave de LLM gratuita no `.env`
+(`AGENT_GEMINI_API_KEY` ou `AGENT_GROQ_API_KEY`); `uv run agent llm-health`
+confirma que ela responde.
 
 ### Sem chave do Pexels
 
@@ -333,6 +346,91 @@ Esse vínculo com o dossiê é o que vai permitir, no M5, ligar retenção ao ma
 que gerou o roteiro. Sem ele, "este vídeo foi melhor" nunca vira "esta fonte
 rende melhor".
 
+## O juiz
+
+```bash
+uv run agent judge --script fixtures/roteiro_sem_fonte.json   # reprova sem gastar nada
+uv run agent produce --out output/roteiro.json                # escreve, julga, revisa
+```
+
+Rubrica de 7 critérios, 0–2 cada, corte em 11/14:
+
+| # | Critério | De onde sai a nota |
+|---|---|---|
+| 1 | hook abre lacuna nos primeiros segundos | julgada |
+| 2 | toda afirmação tem fonte no dossiê | **medida** (dígitos) + julgada |
+| 3 | duração falada entre 60 e 90s | **medida** |
+| 4 | ponto de vista próprio, não resumo de notícia | julgada |
+| 5 | nenhum termo da lista de política | **medida** |
+| 6 | pt-BR falado, frases curtas | julgada |
+| 7 | fechamento com CTA que não seja "siga para mais" | julgada |
+
+### O que não se pergunta ao modelo
+
+Duração é contagem de palavra. Perguntar a um LLM quantos segundos o texto leva
+falado é trocar uma medida por um chute. Política já tem filtro escrito contra o
+radar real, e o juiz **reusa o mesmo filtro** que barrou o tema — duas listas
+divergiriam com o tempo, e o roteiro passaria a ser julgado por uma regra
+diferente da que decidiu o assunto.
+
+Fonte tem as duas metades: a conta de dígitos é nossa, a leitura é do modelo.
+Número inventado é pego sem custo; afirmação que vai além do dossiê precisa de
+um leitor.
+
+### Medir é barato, julgar custa cota
+
+A ordem é a mesma do curador: quando a medida já reprova num critério de
+requisito, **o modelo não é chamado**. Os critérios de leitura ficam marcados
+como *não avaliados* — zero ali significa "não sei", não "ruim", e por isso não
+voltam ao roteirista como correção.
+
+Isso tem um efeito prático bom: a fixture adversarial do M3 é reprovada **sem
+nenhuma chave de API e sem gastar um token**, o que dá para conferir agora:
+
+```
+$ uv run agent judge --script fixtures/roteiro_sem_fonte.json
+modelo    : nao consultado (reprovou na medida)
+  [2/2] medido   duracao        210 palavras, ~84s estimados
+  [2/2] medido   politica       nenhum termo da lista de politica
+  [0/2] medido   fonte          numero citado sem respaldo no dossie: 12, 40
+  [0/2] pulado   hook           nao avaliado: o roteiro reprovou antes em fonte
+  ...
+REPROVADO: 4/14 (corte 11)
+  veto em fonte: e requisito, nao qualidade — nota nos outros criterios nao compensa
+custo     : 0 tokens
+```
+
+A fixture é o roteiro de referência do M0 com **uma única** afirmação enxertada
+("12 mil GPUs e 40 milhões de dólares", números que não existem em nenhum fato).
+Todo o resto é idêntico, de propósito: assim não há como ela ser reprovada por
+escrita ruim, duração ou política. O teste disso ainda dá ao juiz um parecer de
+nota máxima nos cinco critérios julgados — o cenário mais favorável possível ao
+roteiro — e ele reprova mesmo assim.
+
+### A soma não decide sozinha
+
+Aprovar exige três coisas: **11/14**, **nenhum critério zerado** e **nenhum veto**.
+
+A soma sozinha permite compensação errada. Um roteiro que é puro resumo de
+notícia (0 em ponto de vista) chegaria a 12 de 14 com o resto perfeito e
+passaria — sendo exatamente o "AI slop" que o Creator Rewards exclui. E fonte,
+duração e política são **veto**: falham em requisito, não em qualidade, e nota
+alta nos outros critérios não compra aprovação.
+
+### Revisão: no máximo duas
+
+O laço `roteirista → juiz → roteirista` mora fora dos dois estágios
+(`agent/pipeline.py`). Se o roteirista soubesse do juiz, passaria a escrever para
+a rubrica e o parecer deixaria de ser independente; se o juiz soubesse do
+roteirista, julgaria a tentativa e não o texto.
+
+O teto de duas revisões não é arbitrário: a partir da terceira, o que costuma
+acontecer não é o roteiro melhorar — é o modelo começar a trocar de assunto para
+agradar a rubrica. Melhor reprovar com o motivo gravado e escolher outro tema.
+
+As notas de revisão vão ordenadas por custo: **veto primeiro**. Não adianta
+melhorar o hook de um roteiro que cita número sem fonte.
+
 ## Marcos
 
 | | Marco | Estado |
@@ -340,7 +438,7 @@ rende melhor".
 | M0 | Porta Renderer + aceite medido do MP4 | **concluído** |
 | M1 | Radar (HN, Trends, Wikipedia, GDELT) | **concluído** |
 | M2 | Curador: score, filtro de política, dedup por memória | **concluído** |
-| M3 | Pesquisador + roteirista + juiz com rubrica | **pesquisador e roteirista concluídos**; juiz a fazer |
+| M3 | Pesquisador + roteirista + juiz com rubrica | **concluído** |
 | M4 | Publicador (TikTok, inbox, rótulo AIGC) | a fazer |
 | M5 | Eval: free tier vs. modelo pago na mesma rubrica | a fazer |
 

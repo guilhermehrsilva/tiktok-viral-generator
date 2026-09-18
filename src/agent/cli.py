@@ -424,6 +424,240 @@ def write(
     typer.echo(f"\nroteiro #{linha} gravado ({store.script_count()} na memoria)")
 
 
+def _mostrar_parecer(review) -> None:
+    """Imprime a rubrica inteira, critério a critério.
+
+    Sempre inteira, inclusive os criterios que tiraram 2: parecer resumido em
+    "reprovado (9/14)" nao diz o que mudar, e e o motivo por criterio que volta
+    ao roteirista na revisao.
+    """
+    from agent.models import RUBRIC_CUTOFF, RUBRIC_MAX
+
+    typer.echo("")
+    for s in review.scores:
+        cor = (typer.colors.GREEN if s.score == 2
+               else typer.colors.YELLOW if s.score == 1 else typer.colors.RED)
+        # "julgado" para nota que nao foi julgada seria mentira no proprio
+        # relatorio que existe para dar para auditar.
+        marca = "pulado " if not s.evaluated else "medido " if s.measured else "julgado"
+        typer.secho(f"  [{s.score}/2] {marca}  {s.criterion.value}", fg=cor)
+        typer.secho(f"          {s.reason}", fg=typer.colors.BRIGHT_BLACK)
+
+    typer.echo("")
+    if review.approved:
+        typer.secho(f"APROVADO: {review.total}/{RUBRIC_MAX} "
+                    f"(corte {RUBRIC_CUTOFF}, nenhum criterio zerado)",
+                    fg=typer.colors.GREEN, bold=True)
+        return
+
+    typer.secho(f"REPROVADO: {review.total}/{RUBRIC_MAX} (corte {RUBRIC_CUTOFF})",
+                fg=typer.colors.RED, bold=True)
+    for s in review.vetoed:
+        typer.secho(f"  veto em {s.criterion.value}: e requisito, nao qualidade — "
+                    "nota nos outros criterios nao compensa", fg=typer.colors.RED)
+    for s in review.zeroed:
+        if s not in review.vetoed:
+            typer.secho(f"  zerado em {s.criterion.value}: criterio zerado reprova "
+                        "mesmo com a soma no corte", fg=typer.colors.RED)
+
+
+@app.command()
+def judge(
+    topic: str = typer.Option("", "--topic", "-t", help="tema; sem isso, usa o ultimo roteiro"),
+    script_path: Path = typer.Option(
+        None, "--script", "-s", exists=True, readable=True,
+        help="julga este arquivo em vez do ultimo roteiro da memoria",
+    ),
+    llm: str = typer.Option("", "--llm", help="gemini ou groq; padrao vem do .env"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="nao grava o parecer"),
+) -> None:
+    """Aplica a rubrica de 7 critérios a um roteiro."""
+    from datetime import UTC, datetime
+
+    from agent.adapters.llm_factory import build_llm
+    from agent.judge.judge import Judge, review_measured_only
+    from agent.memory.store import SignalStore
+    from agent.models import Dossier
+    from agent.ports.llm import LLMError
+
+    settings.ensure_dirs()
+    store = SignalStore(settings.db_path)
+
+    if script_path is not None:
+        script = _load_script(script_path)
+        # O Script carrega os fatos que o roteirista usou, então um arquivo se
+        # autojulga: e o que permite rodar a fixture adversarial sem a memoria.
+        dossier = Dossier(
+            topic=script.topic, facts=script.facts, collected_at=datetime.now(UTC)
+        )
+    else:
+        script = store.latest_script(topic or None)
+        if script is None:
+            typer.secho("nenhum roteiro na memoria. Rode `uv run agent write` primeiro.",
+                        fg=typer.colors.RED)
+            raise typer.Exit(code=2)
+        dossier = store.latest_dossier(script.topic) or Dossier(
+            topic=script.topic, facts=script.facts, collected_at=datetime.now(UTC)
+        )
+
+    if not dossier.facts:
+        typer.secho("roteiro sem nenhum fato: nao ha dossie contra o que julgar",
+                    fg=typer.colors.RED)
+        raise typer.Exit(code=2)
+
+    typer.echo(f"tema      : {script.topic}")
+    typer.echo(f"roteiro   : {script.word_count} palavras, "
+               f"{len(script.facts)} fatos, ~{script.estimated_duration_s:.0f}s")
+
+    # Medida primeiro: se o roteiro ja reprova num criterio de requisito, nao ha
+    # motivo para exigir chave de API para confirmar isso.
+    antecipado = review_measured_only(script, dossier)
+    if antecipado is not None:
+        typer.echo("modelo    : nao consultado (reprovou na medida)")
+        _mostrar_parecer(antecipado)
+        typer.echo("\ncusto     : 0 tokens")
+        if not dry_run:
+            linha = store.record_review(antecipado, usage=(0, 0), latency_s=0.0)
+            typer.echo(f"parecer #{linha} gravado")
+        raise typer.Exit(code=1)
+
+    try:
+        modelo = build_llm(llm or None)
+        typer.echo(f"modelo    : {modelo.provider}/{modelo.model}")
+        report = Judge(modelo).review(script, dossier)
+    except LLMError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED)
+        raise typer.Exit(code=2) from exc
+
+    _mostrar_parecer(report.review)
+    typer.echo(f"\ncusto     : {report.usage.total_tokens} tokens, {report.latency_s}s")
+
+    if not dry_run:
+        linha = store.record_review(
+            report.review,
+            usage=(report.usage.input_tokens, report.usage.output_tokens),
+            latency_s=report.latency_s,
+        )
+        typer.echo(f"parecer #{linha} gravado")
+
+    raise typer.Exit(code=0 if report.approved else 1)
+
+
+@app.command()
+def produce(
+    topic: str = typer.Option("", "--topic", "-t", help="tema; sem isso, usa o ultimo dossie"),
+    out: Path = typer.Option(None, "--out", "-o", help="grava o roteiro aprovado em JSON"),
+    revisions: int = typer.Option(2, "--revisions", help="teto de rodadas de revisao"),
+    llm: str = typer.Option("", "--llm", help="gemini ou groq; padrao vem do .env"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="nao grava na memoria"),
+) -> None:
+    """Escreve, julga e revisa ate o roteiro passar na rubrica ou estourar as rodadas."""
+    from agent.adapters.llm_factory import build_llm
+    from agent.judge.judge import Judge
+    from agent.memory.store import SignalStore
+    from agent.pipeline import produce as rodar
+    from agent.ports.llm import LLMError
+    from agent.writer.writer import Screenwriter
+
+    settings.ensure_dirs()
+    store = SignalStore(settings.db_path)
+
+    dossier = store.latest_dossier(topic or None)
+    if dossier is None:
+        typer.secho("nenhum dossie na memoria. Rode `uv run agent research` primeiro.",
+                    fg=typer.colors.RED)
+        raise typer.Exit(code=2)
+
+    typer.echo(f"tema      : {dossier.topic}")
+    typer.echo(f"dossie    : {len(dossier.facts)} fatos de "
+               f"{len(dossier.source_urls)} fonte(s)")
+    try:
+        modelo = build_llm(llm or None)
+    except LLMError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED)
+        raise typer.Exit(code=2) from exc
+    typer.echo(f"modelo    : {modelo.provider}/{modelo.model}")
+    typer.echo(f"ate {revisions + 1} rodada(s) de roteiro + parecer...")
+
+    try:
+        report = rodar(dossier, Screenwriter(modelo), Judge(modelo), max_revisions=revisions)
+    except LLMError as exc:
+        typer.secho(f"falha do provedor: {exc}", fg=typer.colors.RED)
+        raise typer.Exit(code=1) from exc
+
+    for i, rodada in enumerate(report.rounds, start=1):
+        typer.echo("")
+        typer.secho(f"--- rodada {i} ---", bold=True)
+        if rodada.write is not None:
+            tentativas = len(rodada.write.attempts)
+            typer.echo(f"roteirista: {tentativas} tentativa(s) mecanica(s)")
+            for t in rodada.write.attempts:
+                for v in t.violations:
+                    typer.secho(f"  - {v}", fg=typer.colors.BRIGHT_BLACK)
+        if rodada.review is not None and rodada.review.review is not None:
+            _mostrar_parecer(rodada.review.review)
+
+    custo = report.usage
+    typer.echo("")
+    typer.echo(f"custo total: {custo.input_tokens} tokens de entrada, "
+               f"{custo.output_tokens} de saida, {report.latency_s}s de modelo")
+
+    if not report.approved:
+        typer.secho("nenhum roteiro aprovado nas rodadas disponiveis; "
+                    "o motivo de cada reprovacao esta acima", fg=typer.colors.RED)
+        if not dry_run and report.script is not None and report.review is not None:
+            _gravar(store, report, dossier)
+        raise typer.Exit(code=1)
+
+    script = report.script
+    typer.echo("")
+    typer.secho(f"ROTEIRO APROVADO: {script.word_count} palavras "
+                f"(~{script.estimated_duration_s:.0f}s)", fg=typer.colors.GREEN, bold=True)
+    typer.echo(f"  {script.hook}")
+    typer.echo(f"  termos: {', '.join(script.search_terms)}")
+
+    if out is not None:
+        out.write_text(
+            script.model_dump_json(indent=2, exclude_none=True) + "\n", encoding="utf-8"
+        )
+        typer.echo(f"\ngravado em {out}")
+        typer.echo(f"renderize com: uv run agent render --script {out}")
+
+    if dry_run:
+        typer.secho("\n--dry-run: nada gravado na memoria", fg=typer.colors.YELLOW)
+        return
+    _gravar(store, report, dossier)
+
+
+def _gravar(store: Any, report: Any, dossier: Any) -> None:
+    """Grava roteiro e parecer ligados, inclusive quando reprovado.
+
+    Reprovado tambem entra: e o registro de em que critério a rubrica bate com
+    mais frequencia, e sem ele calibrar a rubrica seria chute.
+    """
+    ultima = report.rounds[-1]
+    script_id = store.record_script(
+        report.script,
+        model=ultima.write.model,
+        provider=ultima.write.provider,
+        usage=(report.usage.input_tokens, report.usage.output_tokens),
+        latency_s=report.latency_s,
+        attempts=[
+            {"violations": t.violations, "word_count": t.word_count}
+            for rodada in report.rounds if rodada.write is not None
+            for t in rodada.write.attempts
+        ],
+        dossier_id=store.latest_dossier_id(dossier.topic),
+    )
+    review_id = store.record_review(
+        report.review,
+        usage=(report.usage.input_tokens, report.usage.output_tokens),
+        latency_s=report.latency_s,
+        script_id=script_id,
+    )
+    typer.echo(f"\nroteiro #{script_id} e parecer #{review_id} gravados")
+
+
 @app.command("llm-health")
 def llm_health() -> None:
     """Confere se as chaves e os ids de modelo configurados ainda respondem.

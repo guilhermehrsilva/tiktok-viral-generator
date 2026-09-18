@@ -36,7 +36,7 @@ from agent.models import (
     Script,
 )
 from agent.ports.llm import LLM, Completion, LLMError, Usage, parse_json_object
-from agent.research.grounding import canonical_numbers
+from agent.research.grounding import missing_numbers
 
 # Faixa de palavras que corresponde a faixa de duracao exigida.
 MIN_PALAVRAS = int(MIN_DURATION_S * WORDS_PER_SECOND)
@@ -119,13 +119,19 @@ class Screenwriter:
         self._llm = llm
         self._max_attempts = max_attempts
 
-    def write(self, dossier: Dossier) -> WriteReport:
+    def write(self, dossier: Dossier, notes: list[str] | None = None) -> WriteReport:
+        """Escreve o roteiro. `notes` sao as notas de revisao do juiz.
+
+        Elas entram no mesmo canal das violacoes mecanicas -- o modelo recebe uma
+        lista de defeitos a corrigir e nao precisa saber qual deles foi contado e
+        qual foi julgado.
+        """
         report = WriteReport(
             topic=dossier.topic,
             model=getattr(self._llm, "model", ""),
             provider=getattr(self._llm, "provider", ""),
         )
-        correcao: list[str] = []
+        correcao: list[str] = list(notes or [])
 
         for _ in range(self._max_attempts):
             try:
@@ -226,22 +232,18 @@ def _violacoes_mecanicas(script: Script, dossier: Dossier, fora: list[int]) -> l
 def _numeros_sem_dossie(script: Script, dossier: Dossier) -> list[str]:
     """Numero em digito na narracao precisa estar em algum fato do dossie.
 
+    E o mesmo portao que o pesquisador usa para conferir fato contra pagina, com
+    o dossie no lugar da pagina -- a pergunta e identica ("este numero existe na
+    fonte?") e ter duas implementacoes dela garantiria duas respostas.
+
     Limite conhecido: pega so o que esta escrito em digito. A narracao boa
     escreve numero por extenso para o TTS ("cinco virgula nove gigabytes"), e
     conferir isso exigiria converter numeral em portugues de volta para digito.
     Quem cobre esse caso e o criterio 2 da rubrica do juiz, com o dossie em maos
     -- este portao so garante que o barato de conferir nunca passe errado.
     """
-    no_dossie = set()
-    for f in dossier.facts:
-        no_dossie.update(canonical_numbers(f.claim))
-        no_dossie.update(canonical_numbers(f.quote))
-
-    vistos: list[str] = []
-    for numero in canonical_numbers(script.narration):
-        if numero not in no_dossie and numero not in vistos:
-            vistos.append(numero)
-    return vistos
+    fontes = "\n".join(f"{f.claim}\n{f.quote}" for f in dossier.facts)
+    return missing_numbers(script.narration, fontes)
 
 
 def _resolver_fatos(indices: object, facts: list[Fact]) -> tuple[list[Fact], list[int]]:

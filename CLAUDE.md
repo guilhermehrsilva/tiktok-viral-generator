@@ -11,9 +11,9 @@ código: por que ele é assim, onde paramos, e o que vem a seguir.
 
 ## Onde paramos
 
-**M3, fatias 1 e 2 de 3 concluídas** — porta `LLM` com os dois adaptadores de free tier,
-pesquisador e roteirista. 268 testes passando sem rede e sem chave. **O ciclo tema → MP4
-está fechado**; o que falta é o juiz que decide se o roteiro merece ser renderizado.
+**M3 concluído.** Porta `LLM` com os dois adaptadores de free tier, pesquisador, roteirista
+e juiz. 322 testes passando sem rede e sem chave. O agente vai do tema em alta ao MP4
+sozinho, com motivo gravado em cada decisão do caminho.
 
 O que já roda ponta a ponta, a custo zero:
 
@@ -23,14 +23,19 @@ O que já roda ponta a ponta, a custo zero:
 | `uv run agent curate` | coleta, aplica 3 portões, escolhe 1 tema e grava o motivo de cada decisão |
 | `uv run agent research` | monta o dossiê do tema: 3–5 fontes, cada fato com URL e trecho conferidos |
 | `uv run agent write --out <json>` | escreve o roteiro do último dossiê, corrigindo sozinho o que é mecânico |
+| `uv run agent judge --script <json>` | aplica a rubrica de 7 critérios; reprova na medida sem gastar token |
+| `uv run agent produce --out <json>` | escreve, julga e revisa até passar (máx. 2 revisões) |
 | `uv run agent llm-health` | confere qual id de modelo ainda responde, e a que custo |
 | `uv run agent render --script <json>` | produz MP4 1080x1920 com narração pt-BR e legenda karaokê |
 | `uv run agent health` | checa se o renderizador responde |
 
-**A lacuna agora é uma só:** nada decide se o roteiro é bom antes de gastar minutos de
-render. O roteirista já garante o que é contável (faixa de 150–225 palavras, termo em
-ASCII, índice de fato válido, número em dígito ancorado no dossiê); a rubrica de 7
-critérios do juiz é a fatia 3.
+**A próxima lacuna é a publicação.** Hoje o MP4 fica em `output/` e ninguém o sobe. É o M4.
+
+O aceite do M3 é conferível agora, sem chave nenhuma:
+
+```bash
+uv run agent judge --script fixtures/roteiro_sem_fonte.json   # reprova, 0 tokens, exit 1
+```
 
 ### O que falta verificar com chave
 
@@ -108,7 +113,11 @@ uv run pytest && uv run ruff check .
   ancorado. O modelo **aponta** o fato por índice e nunca o reescreve, então a afirmação
   do roteiro continua rastreável à URL que o pesquisador estampou. Toda tentativa
   reprovada fica gravada — é o que revela prompt fraco.
-- **Juiz.** Rubrica de 7 critérios, 0–2 cada, corte em 11/14, com até 2 rodadas de revisão:
+- ~~**Juiz**~~ **feito.** Rubrica de 7 critérios, 0–2 cada, corte em 11/14 — e aprovar
+  exige também **nenhum critério zerado** e **nenhum veto** (fonte, duração e política
+  falham em requisito, não em qualidade). Três critérios saem de medida nossa, não do
+  modelo; quando a medida já reprova, o modelo não é chamado. Até 2 revisões, com as
+  notas ordenadas por custo (veto primeiro). Os sete critérios:
   1. hook abre lacuna de informação nos primeiros 1,5s
   2. toda afirmação factual tem fonte no dossiê
   3. duração falada entre 60 e 90s *(requisito de monetização)*
@@ -121,10 +130,9 @@ uv run pytest && uv run ruff check .
   o fechamento, que explora uma lacuna real da fonte (ela afirma "9x menor" e nunca informa
   o tamanho original). É isso que o critério 4 chama de ponto de vista próprio.
 
-- **Aceite:** roteiro aprovado com 100% das afirmações rastreáveis a uma URL; fixture
-  adversarial com afirmação sem fonte é reprovado pelo juiz. *A metade do dossiê já está
-  coberta: `tests/test_researcher.py` prova que todo fato tem URL, que a URL vem de nós
-  mesmo quando o modelo manda outra, e que número inventado é descartado com motivo.*
+- **Aceite: atingido.** `tests/test_m3_aceite.py` e `fixtures/roteiro_sem_fonte.json` —
+  a fixture adversarial é o roteiro de referência com **uma** afirmação inventada, e é
+  reprovada por fonte mesmo recebendo parecer de nota máxima nos cinco critérios julgados.
 
 ### M4 — publicador
 OAuth do TikTok + Content Posting API via `video.upload` (inbox — **não** exige auditoria).
@@ -204,6 +212,13 @@ medido, e não upgrade assumido.
   inglês e a afirmação sai em pt-BR: "retém 98,2% do desempenho" e *"retains 98.2% of
   performance"* não compartilham uma palavra. Só o número sobrevive à tradução — é por isso
   que o portão de ancoragem compara dígitos, e não texto.
+- **Nota zerada em critério não avaliado não é crítica ao texto.** Quando o juiz reprova na
+  medida e nem chama o modelo, os critérios de leitura ficam com zero e `evaluated=False`.
+  Tratar isso como nota real mandaria o roteirista "melhorar o hook" por causa de algo que
+  nunca foi julgado, e desperdiçaria a revisão no lugar errado.
+- **`vetoed` só vale para critério de requisito.** Usar mínimo 1 como padrão fazia qualquer
+  critério zerado aparecer como veto, e a CLI passava a dizer que *hook* é requisito de
+  monetização — o que é falso. Critério de qualidade zerado reprova por outra regra.
 - **Defeito mecânico não é trabalho do juiz.** Contagem de palavra, termo com acento e
   índice de fato inexistente são conferíveis sem rubrica. Mandar isso para o juiz gastaria
   uma rodada de revisão (e cota) para descobrir o que um `len()` já sabia.

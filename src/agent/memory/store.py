@@ -22,7 +22,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from agent.models import Decision, Dossier, Script, Signal
+from agent.models import Decision, Dossier, Review, Script, Signal
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS signals (
@@ -102,6 +102,28 @@ CREATE TABLE IF NOT EXISTS scripts (
 );
 CREATE INDEX IF NOT EXISTS idx_scripts_topic_created
     ON scripts(topic, created_at DESC);
+
+-- Tabela propria, e nao colunas em `scripts`, porque o mesmo roteiro pode ser
+-- julgado mais de uma vez: o eval do M5 compara juizes de modelos diferentes
+-- sobre o MESMO texto, e isso e uma relacao de um para muitos.
+CREATE TABLE IF NOT EXISTS reviews (
+    id            INTEGER PRIMARY KEY,
+    script_id     INTEGER,
+    topic         TEXT    NOT NULL,
+    model         TEXT    NOT NULL,
+    provider      TEXT    NOT NULL,
+    total         INTEGER NOT NULL,
+    approved      INTEGER NOT NULL,
+    -- Parecer completo: nota e motivo de cada um dos sete criterios. E o que
+    -- permite, depois, agregar por criterio em vez de so pela soma.
+    review_json   TEXT    NOT NULL,
+    input_tokens  INTEGER NOT NULL,
+    output_tokens INTEGER NOT NULL,
+    latency_s     REAL    NOT NULL,
+    created_at    TEXT    NOT NULL,
+    FOREIGN KEY (script_id) REFERENCES scripts(id)
+);
+CREATE INDEX IF NOT EXISTS idx_reviews_script ON reviews(script_id, created_at DESC);
 """
 
 
@@ -302,6 +324,44 @@ class SignalStore:
     def script_count(self) -> int:
         with self._conn() as conn:
             return int(conn.execute("SELECT COUNT(*) AS n FROM scripts").fetchone()["n"])
+
+    # ------------------------------------------------------------------ pareceres
+
+    def record_review(
+        self,
+        review: Review,
+        *,
+        usage: tuple[int, int],
+        latency_s: float,
+        script_id: int | None = None,
+    ) -> int:
+        with self._conn() as conn:
+            cur = conn.execute(
+                "INSERT INTO reviews (script_id, topic, model, provider, total, approved,"
+                " review_json, input_tokens, output_tokens, latency_s, created_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    script_id, review.topic, review.model, review.provider,
+                    review.total, int(review.approved), review.model_dump_json(),
+                    usage[0], usage[1], latency_s, datetime.now(UTC).isoformat(),
+                ),
+            )
+        return int(cur.lastrowid or 0)
+
+    def latest_review(self, topic: str | None = None) -> Review | None:
+        sql = "SELECT review_json FROM reviews"
+        params: tuple = ()
+        if topic:
+            sql += " WHERE topic = ?"
+            params = (topic,)
+        sql += " ORDER BY created_at DESC, id DESC LIMIT 1"
+        with self._conn() as conn:
+            row = conn.execute(sql, params).fetchone()
+        return Review.model_validate_json(row["review_json"]) if row else None
+
+    def review_count(self) -> int:
+        with self._conn() as conn:
+            return int(conn.execute("SELECT COUNT(*) AS n FROM reviews").fetchone()["n"])
 
 
 def _parse_iso(value: str) -> datetime:
