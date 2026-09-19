@@ -169,6 +169,17 @@ class TestPortaoDeTrecho:
         assert not report.ok
         assert "curto demais" in report.discarded[0].reason
 
+    def test_espaco_estreito_dentro_do_numero_nao_reprova(self):
+        """Medido em 18/09/2026: o `groq/compound-mini` devolve "5,9\u202fGB" --
+        espaco estreito sem quebra dentro do numero. E formatacao tipografica, nao
+        parafrase, e reprovar por isso derrubaria copia literal correta."""
+        estreito = "that occupies 5.9\u202fGB on disk, more than 9x smaller than"
+        report = pesquisar(ScriptedLLM(responses=[resposta(
+            (estreito, "O Bonsai 2 27B ocupa 5,9\u202fGB, mais de 9x menor"),
+        )]))
+        assert report.ok
+        assert report.facts[0].quote.startswith("that occupies 5.9")
+
     def test_diferenca_de_espaco_e_quebra_de_linha_nao_reprova(self):
         """O trecho atravessa quebra de linha no HTML; exigir formatacao
         identica reprovaria copia literal correta."""
@@ -328,3 +339,44 @@ def test_dossie_sem_fato_nao_autoriza_roteiro():
     assert report.dossier is None
     with pytest.raises(AttributeError):
         _ = report.dossier.facts
+
+
+class TestUmTrechoUmFato:
+    """Regra que veio de execucao real, nao de suposicao.
+
+    Em 18/09/2026, de UMA frase de changelog o modelo tirou quatro "fatos", tres
+    deles apoiados no mesmo trecho. O dossie parecia cheio (4 fatos) e nao dava
+    assunto para 60 segundos: o roteirista tentou tres vezes e nunca passou de
+    157 palavras.
+    """
+
+    def test_trecho_repetido_na_mesma_fonte_vira_um_fato_so(self):
+        report = pesquisar(ScriptedLLM(responses=[resposta(
+            (TRECHO_TAMANHO, "O Bonsai 2 27B ocupa 5,9 GB, mais de 9x menor"),
+            (TRECHO_TAMANHO, "O modelo e mais de nove vezes menor que o original"),
+            (TRECHO_BENCH, "Retem 98,2% da nota original nos benchmarks"),
+        )]))
+        assert len(report.facts) == 2
+        assert "mesmo trecho ja sustenta outro fato" in report.discarded[0].reason
+
+    def test_diferenca_de_formatacao_nao_burla_a_regra(self):
+        espacado = TRECHO_TAMANHO.replace(" ", "   ")
+        report = pesquisar(ScriptedLLM(responses=[resposta(
+            (TRECHO_TAMANHO, "O Bonsai 2 27B ocupa 5,9 GB, mais de 9x menor"),
+            (espacado, "Afirmacao diferente sobre o mesmo trecho reformatado"),
+        )]))
+        assert len(report.facts) == 1
+
+    def test_trechos_distintos_rendem_fatos_distintos(self):
+        report = pesquisar(ScriptedLLM(responses=[resposta(
+            (TRECHO_TAMANHO, "O Bonsai 2 27B ocupa 5,9 GB, mais de 9x menor"),
+            (TRECHO_BENCH, "Retem 98,2% da nota original nos benchmarks"),
+            (TRECHO_THROUGHPUT, "Roda a 143 tokens por segundo numa RTX 5090"),
+        )]))
+        assert len(report.facts) == 3
+        assert report.discarded == []
+
+    def test_o_prompt_pede_passagem_diferente(self):
+        llm = ScriptedLLM(responses=[resposta((TRECHO_BENCH, "Retem 98,2% da nota"))])
+        pesquisar(llm)
+        assert "passagem DIFERENTE" in llm.calls[0].prompt

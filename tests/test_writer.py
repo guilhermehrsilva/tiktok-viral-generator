@@ -275,3 +275,110 @@ class TestPrompt:
 
 def llm_violacoes(report, indice: int) -> list[str]:
     return report.attempts[indice].violations
+
+
+class TestMarcadorDeCitacao:
+    """Defeito medido em execucao real, nao imaginado.
+
+    O modelo escreveu "...no seu projeto [0]." e "...em um projeto [0, 3]." --
+    echoando no texto FALADO o indice que devia ir so em used_facts. O
+    sintetizador leria "zero" e "tres" em voz alta no video.
+    """
+
+    def test_marcador_no_texto_reprova_com_o_motivo_certo(self):
+        llm = ScriptedLLM(responses=[
+            resposta(extra="A leitura muda sem CLAUDE.md [0] e isso vale para todos [1, 3]."),
+            resposta(),
+        ])
+        report = escrever(llm)
+        assert report.ok
+        (violacao,) = [v for v in report.attempts[0].violations if "marcador" in v]
+        assert "[0]" in violacao and "[1, 3]" in violacao
+        assert "voz alta" in violacao
+
+    def test_marcador_nao_vira_acusacao_de_numero_inventado(self):
+        """A mensagem errada era "numero 0, 1, 2 sem respaldo": verdadeira e
+        inutil para saber o que fazer."""
+        llm = ScriptedLLM(responses=[resposta(extra="Vale para o projeto [0]."), resposta()])
+        report = escrever(llm)
+        assert not any("numero que nao esta no dossie" in v
+                       for v in report.attempts[0].violations)
+
+    def test_numero_inventado_de_verdade_continua_sendo_pego(self):
+        llm = ScriptedLLM(responses=[
+            resposta(extra="Segundo o fato [0], foram 12000 GPUs."), resposta(),
+        ])
+        report = escrever(llm)
+        violacoes = " ".join(report.attempts[0].violations)
+        assert "marcador" in violacoes
+        assert "12000" in violacoes
+
+    def test_ano_no_texto_nao_e_confundido_com_marcador(self):
+        llm = ScriptedLLM(responses=[
+            resposta(extra="Ele ocupa 5,9 GB desde 2026."),
+            resposta(),
+        ])
+        report = escrever(llm)
+        assert report.ok
+        violacoes = " ".join(report.attempts[0].violations)
+        assert "marcador" not in violacoes
+        assert "2026" in violacoes
+
+    def test_o_prompt_proibe_o_marcador(self):
+        from agent.writer.writer import build_prompt
+        prompt = build_prompt(dossie())
+        assert "'[0]'" in prompt and "used_facts" in prompt
+
+
+class TestDossieFino:
+    """Medir antes de pagar, como o curador e o juiz fazem.
+
+    Um dossie de 4 fatos tirados de UMA frase levou o roteirista a tres
+    tentativas, todas entre 104 e 157 palavras: faltava assunto, nao instrucao.
+    """
+
+    def test_dossie_com_menos_de_tres_fatos_nao_gasta_chamada(self):
+        from agent.models import Dossier
+        from agent.writer.writer import Screenwriter
+
+        magro = Dossier(topic="t", facts=dossie().facts[:2], collected_at=AGORA)
+        llm = ScriptedLLM(responses=[])
+        report = Screenwriter(llm).write(magro)
+
+        assert not report.ok
+        assert llm.calls == []
+        assert report.attempts == []
+        assert "dossie fino: 2 fato(s)" in report.refusal
+        assert report.usage.total_tokens == 0
+
+    def test_recusa_diz_o_que_fazer(self):
+        from agent.models import Dossier
+        from agent.writer.writer import Screenwriter
+
+        magro = Dossier(topic="t", facts=dossie().facts[:1], collected_at=AGORA)
+        report = Screenwriter(ScriptedLLM()).write(magro)
+        assert "Pesquise outras fontes" in report.refusal
+
+    def test_tres_fatos_ja_autorizam_a_tentativa(self):
+        report = escrever(ScriptedLLM(responses=[resposta()]))
+        assert report.ok
+        assert report.refusal == ""
+
+    def test_o_roteiro_de_referencia_do_m0_nao_seria_recusado(self):
+        """Cinco fatos de uma unica fonte rendem roteiro: o numero de FONTES nao
+        entra na regra, o de fatos distintos entra."""
+        import json
+        from pathlib import Path
+
+        from agent.models import Dossier, Script
+        from agent.writer.writer import thin_dossier_reason
+
+        bruto = json.loads(
+            (Path(__file__).resolve().parent.parent / "fixtures" / "roteiro_manual.json")
+            .read_text(encoding="utf-8")
+        )
+        bruto.pop("_comment", None)
+        referencia = Script.model_validate(bruto)
+        assert thin_dossier_reason(
+            Dossier(topic=referencia.topic, facts=referencia.facts, collected_at=AGORA)
+        ) == ""

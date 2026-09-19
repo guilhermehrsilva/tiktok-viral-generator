@@ -5,8 +5,6 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 
-import pytest
-
 from agent.adapters.scripted_llm import ScriptedLLM
 from agent.judge.judge import JULGADOS, Judge
 from agent.models import Dossier, Fact
@@ -30,6 +28,10 @@ def dossie() -> Dossier:
             Fact(claim="Retem 98,2% do desempenho nos benchmarks",
                  source_url="https://prismml.com/news/bonsai-2-27b", source_name="PrismML",
                  quote="the model retains 98.2% of the original score"),
+            Fact(claim="Roda a 143 tokens por segundo numa RTX 5090",
+                 source_url="https://cienciahoje.com.br/ia/bonsai",
+                 source_name="Ciencia Hoje",
+                 quote="Throughput reaches 143 tokens per second on a single RTX 5090"),
         ],
         collected_at=AGORA,
     )
@@ -125,10 +127,25 @@ class TestFalhaAntesDoJuiz:
         assert report.rounds[0].review is None
         assert len(llm.calls) == 3  # tres tentativas do roteirista, zero pareceres
 
-    def test_cota_estourada_sobe_e_nao_e_engolida(self):
+    def test_cota_estourada_encerra_o_laco_dizendo_o_estagio(self):
+        """Falha de provedor e dado registrado, nao excecao perdida -- a mesma
+        regra do radar. O estagio entra no texto porque "falha do provedor" sem
+        dizer onde nao ajuda a decidir o que fazer."""
         def responder(prompt: str) -> str:
             raise LLMUnavailable("cota diaria estourada (429)")
 
         llm = ScriptedLLM(responder=responder)
-        with pytest.raises(LLMUnavailable):
-            produce(dossie(), Screenwriter(llm), Judge(llm))
+        report = produce(dossie(), Screenwriter(llm), Judge(llm))
+        assert not report.approved
+        assert report.failure.startswith("roteirista: LLMUnavailable")
+        assert len(report.rounds) == 1
+
+    def test_falha_do_juiz_e_registrada_com_o_roteiro_preservado(self):
+        """O roteiro ja escrito nao se perde: ele custou tokens e serve para a
+        proxima execucao nao comecar do zero."""
+        llm = ScriptedLLM(responses=[roteiro_json(), "nao e json", "tambem nao"])
+        report = produce(dossie(), Screenwriter(llm), Judge(llm))
+        assert not report.approved
+        assert report.failure.startswith("juiz: LLMError")
+        assert report.script is not None
+        assert report.review is None

@@ -10,9 +10,15 @@ schema em todos os modelos. O que existe sempre e `response_format=json_object`,
 que garante JSON valido mas **nao** garante o formato pedido. Entao o schema vai
 tambem no prompt, como texto, e quem chama valida com Pydantic do mesmo jeito.
 
-Os modelos sao open weights (Llama, Qwen) e escrevem pt-BR pior que o Gemini
-Flash. Isso e observacao a medir no M5, nao motivo para tirar o adaptador: o
-custo por token no free tier e o mesmo zero, e a latencia do Groq e muito menor.
+Os modelos sao open weights (GPT-OSS, Qwen). A latencia medida aqui e muito menor
+que a do Gemini Flash -- 1,0s contra 6,6s na mesma chamada de teste, em
+18/09/2026 -- e o custo no free tier e o mesmo zero. Se a escrita em pt-BR
+compensa a diferenca e o que o eval do M5 mede; por enquanto e impressao, nao
+resultado.
+
+Id de modelo aqui e volatil: o padrao anterior (`llama-3.3-70b-versatile`) foi
+descontinuado e devolve 404. Por isso ele vem da configuracao e existe o
+`agent llm-health`, que confere contra o provedor em vez de confiar no padrao.
 """
 
 from __future__ import annotations
@@ -34,13 +40,15 @@ class Groq:
     def __init__(
         self,
         api_key: str,
-        model: str = "llama-3.3-70b-versatile",
+        model: str = "openai/gpt-oss-120b",
         client: httpx.Client | None = None,
-        timeout_s: float = 60.0,
+        timeout_s: float = 120.0,
+        reasoning_effort: str = "",
     ):
         if not api_key:
             raise LLMError("AGENT_GROQ_API_KEY vazia; a chave e gratuita em console.groq.com/keys")
         self.model = model
+        self._reasoning_effort = reasoning_effort
         self._client = client or httpx.Client(
             base_url=BASE_URL,
             timeout=httpx.Timeout(timeout_s),
@@ -62,6 +70,7 @@ class Groq:
         payload = self.build_payload(
             prompt, system=system, schema=schema, model=self.model,
             temperature=temperature, max_output_tokens=max_output_tokens,
+            reasoning_effort=self._reasoning_effort,
         )
         inicio = time.monotonic()
         try:
@@ -87,7 +96,7 @@ class Groq:
     @staticmethod
     def build_payload(
         prompt: str, *, system: str, schema: dict | None, model: str,
-        temperature: float, max_output_tokens: int,
+        temperature: float, max_output_tokens: int, reasoning_effort: str = "",
     ) -> dict[str, Any]:
         """Monta o corpo do chat/completions. Separado para ser testavel sem rede."""
         mensagens: list[dict[str, str]] = []
@@ -115,6 +124,10 @@ class Groq:
         }
         if schema is not None:
             payload["response_format"] = {"type": "json_object"}
+        if reasoning_effort:
+            # Só os modelos de raciocinio aceitam; mandar para os outros devolve
+            # 400, por isso o padrao e nao enviar.
+            payload["reasoning_effort"] = reasoning_effort
         return payload
 
     @staticmethod

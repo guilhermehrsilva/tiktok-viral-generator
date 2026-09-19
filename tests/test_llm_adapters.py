@@ -193,7 +193,7 @@ class TestPayloadGroq:
 class TestRespostaGroq:
     def test_texto_e_tokens(self):
         r = groq(body={
-            "model": "llama-3.3-70b-versatile",
+            "model": "openai/gpt-oss-120b",
             "choices": [{"message": {"content": '{"facts": []}'}, "finish_reason": "stop"}],
             "usage": {"prompt_tokens": 900, "completion_tokens": 40},
         }).complete("x", schema=SCHEMA)

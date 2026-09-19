@@ -48,7 +48,7 @@ class TestGravacao:
         """O eval do M5 compara provedores por consumo: o numero precisa estar
         em coluna, nao enterrado no JSON."""
         store.record_dossier(
-            dossie(), model="llama-3.3-70b-versatile", provider="groq",
+            dossie(), model="openai/gpt-oss-120b", provider="groq",
             usage=(900, 40), latency_s=1.2, source_count=3,
         )
         with store._conn() as conn:

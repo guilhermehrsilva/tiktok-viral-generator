@@ -23,13 +23,15 @@ def build_llm(provider: str | None = None, settings: Settings | None = None) -> 
         from agent.adapters.gemini_free import GeminiFree
 
         return GeminiFree(
-            api_key=cfg.gemini_api_key, model=cfg.gemini_model, timeout_s=cfg.llm_timeout_s
+            api_key=cfg.gemini_api_key, model=cfg.gemini_model,
+            timeout_s=cfg.llm_timeout_s, thinking_budget=cfg.gemini_thinking_budget,
         )
     if nome == "groq":
         from agent.adapters.groq import Groq
 
         return Groq(
-            api_key=cfg.groq_api_key, model=cfg.groq_model, timeout_s=cfg.llm_timeout_s
+            api_key=cfg.groq_api_key, model=cfg.groq_model,
+            timeout_s=cfg.llm_timeout_s, reasoning_effort=cfg.groq_reasoning_effort,
         )
     raise LLMError(f"provedor de LLM desconhecido: {nome!r}; use um de {PROVEDORES}")
 

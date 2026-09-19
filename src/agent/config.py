@@ -56,9 +56,33 @@ class Settings(BaseSettings):
     # configuraveis, e `agent llm-health` confere contra o provedor em vez de
     # confiar que o padrao ainda existe.
     gemini_model: str = "gemini-2.5-flash"
+    # O 2.5 Flash raciocina por padrao, e o raciocinio sai do MESMO orcamento de
+    # saida e do mesmo relogio. Medido em 18/09/2026, com thinking ligado: uma
+    # chamada do roteirista truncou o JSON no meio (o objeto abriu e nao fechou) e
+    # outra estourou 60s de leitura. Zero desliga. Nao e economia de token: e o que
+    # torna a resposta previsivel o bastante para ser validada por contrato.
+    # Negativo deixa o provedor decidir (dinamico); se um dia houver evidencia de
+    # que raciocinio melhora a rubrica, isso vira experimento do M5 e nao palpite.
+    gemini_thinking_budget: int = 0
     groq_api_key: str = ""
-    groq_model: str = "llama-3.3-70b-versatile"
-    llm_timeout_s: float = 60.0
+    # Medido em 18/09/2026: o `llama-3.3-70b-versatile`, que era o padrao obvio,
+    # saiu do catalogo do Groq (404 model_not_found) e nao ha mais nenhum Llama de
+    # chat lá. Entre os que existem, este e o mais forte de uso geral -- o que
+    # importa porque o Groq e o braco que o eval do M5 compara contra o pago.
+    # Alternativa mais rapida e barata: "qwen/qwen3.8-27b" (0,5s contra 1,0s, e
+    # menos da metade dos tokens). Os `groq/compound*` ficam FORA de proposito:
+    # sao sistemas agenticos com busca web embutida, e aqui o texto da fonte quem
+    # entrega e o pesquisador -- modelo que sai buscando sozinho quebra a
+    # ancoragem.
+    groq_model: str = "openai/gpt-oss-120b"
+    # Vazio nao envia o parametro. Os `openai/gpt-oss-*` aceitam low/medium/high;
+    # mandar isso para modelo que nao suporta devolve 400, e o caminho verificado
+    # em 18/09/2026 foi sem o parametro.
+    groq_reasoning_effort: str = ""
+    # 60s nao bastavam: geracao de roteiro no free tier passa disso mesmo com o
+    # raciocinio desligado, e o timeout caia no meio da chamada -- gastando a cota
+    # sem receber a resposta.
+    llm_timeout_s: float = 120.0
 
     # --- pesquisador ---
     # Cinco fontes cobrem um tema sem estourar a cota por minuto do free tier

@@ -361,6 +361,11 @@ def write(
         typer.secho(f"falha do provedor: {exc}", fg=typer.colors.RED)
         raise typer.Exit(code=1) from exc
 
+    if report.refusal:
+        typer.secho(f"\n{report.refusal}", fg=typer.colors.RED)
+        typer.echo("nenhuma chamada de modelo foi feita; custo zero")
+        raise typer.Exit(code=1)
+
     # As tentativas corrigidas aparecem mesmo no sucesso: se toda execucao gasta
     # duas rodadas no mesmo defeito, o prompt e que esta fraco.
     for i, tentativa in enumerate(report.attempts, start=1):
@@ -579,16 +584,16 @@ def produce(
     typer.echo(f"modelo    : {modelo.provider}/{modelo.model}")
     typer.echo(f"ate {revisions + 1} rodada(s) de roteiro + parecer...")
 
-    try:
-        report = rodar(dossier, Screenwriter(modelo), Judge(modelo), max_revisions=revisions)
-    except LLMError as exc:
-        typer.secho(f"falha do provedor: {exc}", fg=typer.colors.RED)
-        raise typer.Exit(code=1) from exc
+    report = rodar(dossier, Screenwriter(modelo), Judge(modelo), max_revisions=revisions)
+    if report.failure:
+        typer.secho(f"falha no meio do laco — {report.failure}", fg=typer.colors.RED)
 
     for i, rodada in enumerate(report.rounds, start=1):
         typer.echo("")
         typer.secho(f"--- rodada {i} ---", bold=True)
-        if rodada.write is not None:
+        if rodada.write is not None and rodada.write.refusal:
+            typer.secho(f"roteirista recusou: {rodada.write.refusal}", fg=typer.colors.RED)
+        elif rodada.write is not None:
             tentativas = len(rodada.write.attempts)
             typer.echo(f"roteirista: {tentativas} tentativa(s) mecanica(s)")
             for t in rodada.write.attempts:

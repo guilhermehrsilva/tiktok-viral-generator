@@ -115,7 +115,7 @@ class TestLeitura:
 
     def test_custo_consultavel_por_sql(self, store):
         store.record_script(
-            roteiro(), model="llama-3.3-70b-versatile", provider="groq",
+            roteiro(), model="openai/gpt-oss-120b", provider="groq",
             usage=(1800, 260), latency_s=0.9,
             attempts=[{"violations": [], "word_count": 180}],
         )

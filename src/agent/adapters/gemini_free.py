@@ -11,6 +11,12 @@ Caminho padrao do projeto por tres razoes praticas, nao por preferencia:
 A cota do free tier e por minuto **e** por dia. Estourar devolve 429, que sobe
 como LLMUnavailable: repetir na hora nao resolve e segurar a execucao esperando
 a janela abrir custaria mais que perder a fonte.
+
+O raciocinio interno do 2.5 Flash vem **desligado** por padrao aqui, e isso foi
+decidido medindo: com ele ligado, uma chamada do roteirista truncou o JSON no
+meio e outra estourou o timeout de leitura. Ele sai do mesmo orcamento de saida e
+do mesmo relogio da resposta, entao ligado ele troca previsibilidade por
+qualidade que ainda nao foi medida -- e medir isso e experimento do M5.
 """
 
 from __future__ import annotations
@@ -43,13 +49,15 @@ class GeminiFree:
         api_key: str,
         model: str = "gemini-2.5-flash",
         client: httpx.Client | None = None,
-        timeout_s: float = 60.0,
+        timeout_s: float = 120.0,
+        thinking_budget: int = 0,
     ):
         if not api_key:
             raise LLMError(
                 "AGENT_GEMINI_API_KEY vazia; a chave e gratuita em aistudio.google.com/apikey"
             )
         self.model = model
+        self._thinking_budget = thinking_budget
         self._client = client or httpx.Client(
             base_url=BASE_URL,
             timeout=httpx.Timeout(timeout_s),
@@ -68,6 +76,7 @@ class GeminiFree:
         payload = self.build_payload(
             prompt, system=system, schema=schema,
             temperature=temperature, max_output_tokens=max_output_tokens,
+            thinking_budget=self._thinking_budget,
         )
         inicio = time.monotonic()
         try:
@@ -93,13 +102,18 @@ class GeminiFree:
     @staticmethod
     def build_payload(
         prompt: str, *, system: str, schema: dict | None,
-        temperature: float, max_output_tokens: int,
+        temperature: float, max_output_tokens: int, thinking_budget: int = 0,
     ) -> dict[str, Any]:
         """Monta o corpo do generateContent. Separado para ser testavel sem rede."""
         config: dict[str, Any] = {
             "temperature": temperature,
             "maxOutputTokens": max_output_tokens,
         }
+        if thinking_budget >= 0:
+            # Sem isso o raciocinio consome o maxOutputTokens e a resposta chega
+            # truncada, com o objeto JSON aberto e nao fechado. Orcamento
+            # negativo omite o campo e deixa o provedor decidir.
+            config["thinkingConfig"] = {"thinkingBudget": thinking_budget}
         if schema is not None:
             config["responseMimeType"] = "application/json"
             config["responseSchema"] = to_openapi_schema(schema)

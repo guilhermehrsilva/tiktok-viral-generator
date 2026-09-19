@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 
 from agent.judge.judge import Judge, ReviewReport
 from agent.models import Dossier, Review, Script
-from agent.ports.llm import Usage
+from agent.ports.llm import LLMError, Usage
 from agent.writer.writer import Screenwriter, WriteReport
 
 MAX_REVISOES = 2
@@ -29,6 +29,8 @@ class Round:
     notes_in: list[str] = field(default_factory=list)
     write: WriteReport | None = None
     review: ReviewReport | None = None
+    # Falha de provedor no meio da rodada, com o estagio em que aconteceu.
+    failure: str = ""
 
     @property
     def approved(self) -> bool:
@@ -50,6 +52,11 @@ class ProductionReport:
     @property
     def approved(self) -> bool:
         return any(r.approved for r in self.rounds)
+
+    @property
+    def failure(self) -> str:
+        """Falha de provedor que interrompeu o laco, se houve."""
+        return next((r.failure for r in reversed(self.rounds) if r.failure), "")
 
     @property
     def script(self) -> Script | None:
@@ -104,8 +111,17 @@ def produce(
 
     for _ in range(max_revisions + 1):
         rodada = Round(notes_in=list(notas))
-        rodada.write = writer.write(dossier, notes=notas or None)
         report.rounds.append(rodada)
+
+        try:
+            rodada.write = writer.write(dossier, notes=notas or None)
+        except LLMError as exc:
+            # Cota ou instabilidade. O laco termina aqui, mas registrando o
+            # estagio e mantendo o custo ja gasto no relatorio -- sob restricao de
+            # $0, saber quanto se pagou por uma execucao que nao entregou nada e
+            # parte do resultado.
+            rodada.failure = f"roteirista: {type(exc).__name__}: {exc}"
+            return report
 
         if rodada.write.script is None:
             # O roteirista nao passou nos proprios portoes mecanicos em tres
@@ -113,7 +129,12 @@ def produce(
             # texto que ja se sabe fora da faixa de duracao.
             return report
 
-        rodada.review = judge.review(rodada.write.script, dossier)
+        try:
+            rodada.review = judge.review(rodada.write.script, dossier)
+        except LLMError as exc:
+            rodada.failure = f"juiz: {type(exc).__name__}: {exc}"
+            return report
+
         if rodada.review.approved:
             return report
 

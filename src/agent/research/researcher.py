@@ -18,6 +18,10 @@ da afirmacao ao texto, e e ai que entram os dois portoes deterministicos:
 
 Os dois derrubam o fato com motivo gravado, nunca em silencio. Dossie curto com
 motivo registrado e calibravel; dossie cheio de fato frouxo nao e.
+
+Ha ainda uma terceira regra, e ela veio de execucao real: **um trecho sustenta um
+fato so**. Sem isso, o modelo divide uma frase de changelog em quatro afirmacoes
+e entrega um dossie que parece cheio e nao da assunto para 60 segundos de video.
 """
 
 from __future__ import annotations
@@ -208,6 +212,7 @@ class Researcher:
         fatos: list[Fact] = []
         descartados: list[Discarded] = []
         vistos: set[str] = set()
+        trechos: set[str] = set()
 
         for cru in crus[: self._max_facts]:
             if not isinstance(cru, dict):
@@ -226,6 +231,21 @@ class Researcher:
             if motivo:
                 descartados.append(Discarded(claim=claim, reason=motivo, source_url=page.url))
                 continue
+
+            chave_trecho = _normalizar(quote)
+            if chave_trecho in trechos:
+                # Medido na primeira execucao real (18/09/2026): de uma unica
+                # frase de changelog sairam quatro "fatos", tres deles apoiados no
+                # MESMO trecho. Um dossie assim parece cheio e nao sustenta 60
+                # segundos de narracao -- o roteirista bateu na parede tres vezes.
+                descartados.append(Discarded(
+                    claim=claim,
+                    reason="mesmo trecho ja sustenta outro fato desta fonte; "
+                           "uma frase nao vira varios fatos",
+                    source_url=page.url,
+                ))
+                continue
+            trechos.add(chave_trecho)
 
             try:
                 fatos.append(Fact(
@@ -277,6 +297,9 @@ def build_prompt(page: Page, topic: str, max_facts: int) -> str:
         "- claim: a afirmacao em portugues do Brasil, completa e compreensivel "
         "sozinha, preservando todo numero exatamente como aparece na passagem.\n\n"
         "REGRAS\n"
+        "- Cada afirmacao precisa vir de uma passagem DIFERENTE do texto. Nao "
+        "divida a mesma frase em varias afirmacoes: se o texto só sustenta uma, "
+        "devolva uma.\n"
         "- Prefira afirmacoes com numero, data, medida ou nome proprio.\n"
         "- Nao invente numero, nao converta unidade e nao arredonde.\n"
         "- Nao afirme nada que o texto nao diga, mesmo que voce saiba ser verdade.\n"

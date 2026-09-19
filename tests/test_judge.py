@@ -72,7 +72,9 @@ def parecer(**notas: int) -> str:
 
 
 def julgar(resposta: str, script: Script | None = None, dossier: Dossier | None = None):
-    llm = ScriptedLLM(responses=[resposta])
+    # A mesma resposta duas vezes: o juiz tem direito a uma segunda tentativa
+    # quando a primeira vem malformada, e o teste precisa poder exercitar as duas.
+    llm = ScriptedLLM(responses=[resposta, resposta])
     return Judge(llm).review(script or roteiro(), dossier or dossie()), llm
 
 
@@ -265,6 +267,29 @@ class TestRespostaDefeituosa:
         del bruto["cta"]
         with pytest.raises(LLMError, match="cta"):
             julgar(json.dumps(bruto))
+
+    def test_resposta_malformada_ganha_uma_segunda_chance(self):
+        """Medido em 18/09/2026: o Flash truncou o JSON do parecer no meio, e o
+        roteiro ja escrito se perdia por causa disso. Uma segunda chamada custa
+        menos que refazer o roteiro inteiro na proxima execucao."""
+        llm = ScriptedLLM(responses=['{"hook": {"reason": "cortou aqui', parecer()])
+        report = Judge(llm).review(roteiro(), dossie())
+        assert report.approved
+        assert len(llm.calls) == 2
+
+    def test_custo_das_duas_tentativas_entra_no_relatorio(self):
+        llm = ScriptedLLM(responses=["nao e json", parecer()])
+        report = Judge(llm).review(roteiro(), dossie())
+        # As duas chamadas foram cobradas; contar so a que funcionou
+        # subestimaria o custo do parecer no eval do M5.
+        assert report.usage.output_tokens > len(parecer().split())
+
+    def test_erro_final_diz_quanto_foi_gasto(self):
+        """Sob restricao de $0, saber o custo de uma execucao que nao entregou
+        nada e parte do resultado."""
+        llm = ScriptedLLM(responses=["nao e json", "tambem nao e"])
+        with pytest.raises(LLMError, match="gastos [0-9]+ tokens"):
+            Judge(llm).review(roteiro(), dossie())
 
     def test_motivo_vazio_nao_quebra_o_contrato(self):
         """`reason` e obrigatorio no contrato; parecer sem motivo ganha um texto

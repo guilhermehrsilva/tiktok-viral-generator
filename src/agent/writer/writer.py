@@ -22,6 +22,7 @@ e e a medida que manda.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -41,6 +42,17 @@ from agent.research.grounding import missing_numbers
 # Faixa de palavras que corresponde a faixa de duracao exigida.
 MIN_PALAVRAS = int(MIN_DURATION_S * WORDS_PER_SECOND)
 MAX_PALAVRAS = int(MAX_DURATION_S * WORDS_PER_SECOND)
+
+# "[0]", "[1, 2]": o indice do fato echoado dentro do texto. Medido na primeira
+# execucao real (18/09/2026): o modelo escreveu "...no seu projeto [0]." e
+# "...em um projeto [0, 3]." -- e o TTS leria "zero" e "um" em voz alta.
+_MARCADOR_DE_CITACAO = re.compile(r"\[\s*\d+(?:\s*,\s*\d+)*\s*\]")
+
+# Abaixo disto o dossie nao sustenta 60 segundos de narracao. Medido: um dossie
+# de 4 fatos tirados de UMA frase de changelog levou o roteirista a tres
+# tentativas, todas entre 104 e 157 palavras, sem nunca alcancar as 150 -- porque
+# nao havia assunto, e nao porque a instrucao estava ruim.
+MIN_FATOS_PARA_ROTEIRO = 3
 
 # Tentativas totais, contando a primeira. Duas correcoes bastam para defeito
 # mecanico; se o modelo nao acerta a contagem em tres tentativas, o problema nao
@@ -69,10 +81,17 @@ SCHEMA_ROTEIRO: dict[str, Any] = {
 
 @dataclass
 class Attempt:
-    """Uma tentativa e o que ela violou. Vazio significa que ela foi aceita."""
+    """Uma tentativa e o que ela violou. Vazio significa que ela foi aceita.
+
+    `narration` guarda o texto reprovado. Sem ele, entender POR QUE um portao
+    reprovou exige rodar de novo e pagar a cota outra vez -- foi o que aconteceu
+    na primeira execucao real, com um portao acusando "numero 0, 1, 2" sem que
+    houvesse como ver de onde os numeros vinham.
+    """
 
     violations: list[str] = field(default_factory=list)
     word_count: int = 0
+    narration: str = ""
     usage: Usage = field(default_factory=Usage)
     latency_s: float = 0.0
 
@@ -92,6 +111,9 @@ class WriteReport:
     attempts: list[Attempt] = field(default_factory=list)
     model: str = ""
     provider: str = ""
+    # Motivo de nem ter tentado. Diferente de tentativa reprovada: aqui nenhuma
+    # chamada foi feita, e o custo e zero.
+    refusal: str = ""
 
     @property
     def ok(self) -> bool:
@@ -131,6 +153,14 @@ class Screenwriter:
             model=getattr(self._llm, "model", ""),
             provider=getattr(self._llm, "provider", ""),
         )
+
+        report.refusal = thin_dossier_reason(dossier)
+        if report.refusal:
+            # Medir antes de pagar, como o curador e o juiz fazem: dossie que nao
+            # sustenta 60s de narracao nao vira roteiro por insistencia, e tentar
+            # tres vezes so gastaria cota para chegar na mesma parede.
+            return report
+
         correcao: list[str] = list(notes or [])
 
         for _ in range(self._max_attempts):
@@ -191,6 +221,7 @@ class Screenwriter:
             return tentativa, None
 
         tentativa.word_count = script.word_count
+        tentativa.narration = script.narration
         tentativa.violations.extend(_violacoes_mecanicas(script, dossier, fora))
         return tentativa, (script if not tentativa.violations else None)
 
@@ -198,6 +229,14 @@ class Screenwriter:
 def _violacoes_mecanicas(script: Script, dossier: Dossier, fora: list[int]) -> list[str]:
     """O que da para conferir sem julgamento. Texto vai de volta ao modelo."""
     problemas: list[str] = []
+
+    marcadores = _MARCADOR_DE_CITACAO.findall(script.narration)
+    if marcadores:
+        problemas.append(
+            f"a narracao contem marcador de citacao ({', '.join(marcadores[:4])}). "
+            "O texto e falado por um sintetizador: ele leria esses numeros em voz "
+            "alta. O indice do fato vai APENAS no campo used_facts."
+        )
 
     if not (MIN_PALAVRAS <= script.word_count <= MAX_PALAVRAS):
         alvo = (MIN_PALAVRAS + MAX_PALAVRAS) // 2
@@ -220,6 +259,7 @@ def _violacoes_mecanicas(script: Script, dossier: Dossier, fora: list[int]) -> l
         )
 
     soltos = _numeros_sem_dossie(script, dossier)
+
     if soltos:
         problemas.append(
             f"a narracao cita numero que nao esta no dossie: {', '.join(soltos)}. "
@@ -243,7 +283,31 @@ def _numeros_sem_dossie(script: Script, dossier: Dossier) -> list[str]:
     -- este portao so garante que o barato de conferir nunca passe errado.
     """
     fontes = "\n".join(f"{f.claim}\n{f.quote}" for f in dossier.facts)
-    return missing_numbers(script.narration, fontes)
+    # O marcador de citacao sai antes da conta: ele tem violacao propria, e
+    # deixa-lo aqui faria o portao acusar "numero 0, 1, 2 sem respaldo" -- que e
+    # verdade e nao ajuda ninguem a entender o que fazer.
+    narracao = _MARCADOR_DE_CITACAO.sub(" ", script.narration)
+    return missing_numbers(narracao, fontes)
+
+
+def thin_dossier_reason(dossier: Dossier) -> str:
+    """Motivo para nao tentar escrever, ou string vazia se da para tentar.
+
+    A faixa de 60-90s exige umas 150 palavras de conteudo. Dossie com dois fatos
+    tirados da mesma frase nao tem isso, e o roteirista so tem duas saidas:
+    encher de enrolacao, ou inventar. As duas sao piores que recusar com motivo.
+
+    O numero de FONTES nao entra: uma fonte rica rende roteiro (o roteiro de
+    referencia do M0 tem cinco fatos de um unico release). O que conta e quantos
+    fatos distintos existem.
+    """
+    if len(dossier.facts) < MIN_FATOS_PARA_ROTEIRO:
+        return (
+            f"dossie fino: {len(dossier.facts)} fato(s), e a faixa de "
+            f"{MIN_DURATION_S}-{MAX_DURATION_S}s pede pelo menos "
+            f"{MIN_FATOS_PARA_ROTEIRO}. Pesquise outras fontes antes de roteirizar."
+        )
+    return ""
 
 
 def _resolver_fatos(indices: object, facts: list[Fact]) -> tuple[list[Fact], list[int]]:
@@ -314,6 +378,9 @@ def build_prompt(dossier: Dossier, correcoes: list[str] | None = None) -> str:
         "('cinco virgula nove gigabytes'), mas nunca mude o valor.\n"
         "- Nao invente numero, nome, data nem citacao. Se o dossie nao diz, o "
         "roteiro nao afirma.\n"
+        "- NAO escreva os indices no texto. Nada de '[0]' ou '[1, 2]' no meio da "
+        "frase: o texto vai ser lido por um sintetizador de voz, que falaria esses "
+        "numeros em voz alta. O indice vai apenas no campo used_facts.\n"
         "- Sem emoji, sem hashtag, sem marcacao de cena. So o que sera falado.",
     ]
 

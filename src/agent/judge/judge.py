@@ -49,6 +49,10 @@ from agent.models import (
 from agent.ports.llm import LLM, Completion, LLMError, Usage, parse_json_object
 from agent.research.grounding import missing_numbers
 
+# Duas chances para o parecer. Truncamento e JSON malformado sao intermitentes, e
+# perder um roteiro ja escrito por causa disso custaria a proxima execucao inteira.
+MAX_TENTATIVAS = 2
+
 # Criterios que dependem de leitura. A ordem e a da rubrica original.
 JULGADOS = (Criterion.hook, Criterion.fonte, Criterion.ponto_de_vista,
             Criterion.pt_br, Criterion.cta)
@@ -136,19 +140,39 @@ class Judge:
             # Reprovado na medida: nenhuma chamada, custo zero.
             return ReviewReport(review=antecipado)
 
-        resposta = self._llm.complete(
-            build_prompt(script, dossier),
-            system=SISTEMA,
-            schema=SCHEMA_PARECER,
-            temperature=0.0,  # parecer precisa ser reproduzivel para o M5 comparar
-            max_output_tokens=1536,
-        )
-        return ReviewReport(
-            review=self._montar(
-                script, _notas_medidas(script) + _notas_julgadas(resposta)
-            ),
-            usage=resposta.usage,
-            latency_s=resposta.latency_s,
+        uso = Usage()
+        latencia = 0.0
+        ultimo = ""
+
+        for _ in range(MAX_TENTATIVAS):
+            resposta = self._llm.complete(
+                build_prompt(script, dossier),
+                system=SISTEMA,
+                schema=SCHEMA_PARECER,
+                temperature=0.0,  # parecer precisa ser reproduzivel para o M5 comparar
+                max_output_tokens=1536,
+            )
+            uso = uso + resposta.usage
+            latencia = round(latencia + resposta.latency_s, 3)
+            try:
+                julgadas = _notas_julgadas(resposta)
+            except LLMError as exc:
+                # Resposta malformada e truncamento sao intermitentes: o roteiro
+                # ja escrito nao pode ser perdido por causa de um JSON que abriu
+                # e nao fechou. Uma segunda chance custa menos que refazer o
+                # roteiro inteiro na proxima execucao.
+                ultimo = str(exc)
+                continue
+
+            return ReviewReport(
+                review=self._montar(script, _notas_medidas(script) + julgadas),
+                usage=uso,
+                latency_s=latencia,
+            )
+
+        raise LLMError(
+            f"parecer invalido em {MAX_TENTATIVAS} tentativas ({ultimo}); "
+            f"gastos {uso.total_tokens} tokens"
         )
 
     def _montar(self, script: Script, notas: list[CriterionScore]) -> Review:
