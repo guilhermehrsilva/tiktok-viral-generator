@@ -12,6 +12,15 @@ import re
 HOOK_MAX_WORDS = 12
 
 _DIGITO = re.compile(r"\d+(?:[.,]\d+)?")
+_NOME_COLADO = re.compile(r"\b(?=[\w.,]*[A-Za-zÀ-ÿ])[\w.,]*\d[\w.,]*\b")
+_NOME_SIGLA_NUMERO = re.compile(r"[A-ZÀ-Þ]{2,}\s+\d+(?:[.,]\d+)?")
+
+
+def _sem_nomes(text: str) -> str:
+    """Tira nomes proprios da conta: 27B, FP16 e RTX 5090 sao uma unidade
+    lexical para o publico tech, nao duas quantidades na mesma frase."""
+    text = _NOME_COLADO.sub("", text)
+    return _NOME_SIGLA_NUMERO.sub(lambda m: m.group(0).split()[0], text)
 _SENTENCA = re.compile(r"(?<=[.!?…])\s+|\n+")
 _EMOJI = re.compile("[\U0001F300-\U0001FAFF\u2600-\u27BF\u2B00-\u2BFF]")
 _BORDAO = ("fala galera", "fala, galera", "se inscreva", "se inscrevam",
@@ -39,7 +48,7 @@ def check_numbers(text: str, ignorar_ate: int = 0) -> list[str]:
     """
     problemas = []
     for sent in [s.strip() for s in _SENTENCA.split(text) if s.strip()]:
-        nums = [n for n in _DIGITO.findall(sent)
+        nums = [n for n in _DIGITO.findall(_sem_nomes(sent))
                 if not (n.isdigit() and int(n) <= ignorar_ate)]
         if len(nums) > 1:
             problemas.append(

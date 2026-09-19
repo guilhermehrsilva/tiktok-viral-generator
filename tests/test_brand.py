@@ -53,6 +53,10 @@ class TestPortoes:
         falha = check_hook(" ".join(["palavra"] * 13))
         assert falha is not None and "12" in falha
 
+    def test_nome_proprio_nao_conta_como_numero(self):
+        assert check_numbers("O Bonsai 27B roda na RTX 5090.") == []
+        assert check_numbers("Escala FP16 com 1.76 bits.") == []
+
     def test_dois_numeros_pedem_duas_frases(self):
         texto = "Ocupa 5,9 GB e retem 98,2% do desempenho."
         (falha,) = check_numbers(texto)

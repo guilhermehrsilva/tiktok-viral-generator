@@ -225,7 +225,10 @@ def build_prompt(dossier: Dossier, correcoes: list[str] | None = None) -> str:
         "(mire 10 para caber no teto de 12 da marca).\n"
         "- caption: uma linha com a palavra-chave + UMA pergunta.\n"
         "- visual: tag COPIADA da lista de ESTETICA, um pilar so.\n"
-        "- used_facts: indices do dossie.\n",
+        "- used_facts: indices do dossie.\n"
+        "- UM dado numerico por linha: '143 tokens/s na RTX 5090' quebra a "
+        "regra da marca (dois numeros numa frase) -- ponha '143 tokens por "
+        "segundo' numa linha e o nome da placa na outra.\n",
         visual_brief(suggest_pillar(dossier.topic)),
         voice_brief(),
         "REGRAS\n"
