@@ -1413,7 +1413,8 @@ def status() -> None:
 
     store = SignalStore(settings.db_path)
     with store._conn() as conn:
-        n = lambda t: conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+        def n(tabela: str) -> int:
+            return int(conn.execute(f"SELECT COUNT(*) FROM {tabela}").fetchone()[0])
         temas = [r["term"] for r in conn.execute(
             "SELECT term FROM topics WHERE verdict='selected'"
             " ORDER BY decided_at DESC LIMIT 5").fetchall()]
