@@ -33,11 +33,11 @@ O que já roda ponta a ponta, a custo zero:
 | `uv run agent publish-status --publish-id <id>` | consulta o estado e atualiza `posts` |
 | `uv run agent tiktok-auth-url` | imprime a URL de autorização OAuth (escopo video.upload) |
 
-**M4 commitado (b81b928).** Falta a parte
-que só existe com conta: registrar o app em developers.tiktok.com (escopo
-`video.upload`), autorizar via `tiktok-auth-url`, gravar
-`AGENT_TIKTOK_ACCESS_TOKEN` no `.env` e conferir o primeiro post real no app
--- inbox + rótulo AIGC ligado manualmente, que o endpoint inbox não recebe.
+**M4 commitado (b81b928 + fix 6b53033). Primeiro post real em 19/09/2026:**
+`publish_id v_inbox_file~v2.7687247660403689473` (MP4 40,8 MB, 69s) subiu em
+4 chunks para a inbox e chegou a `SEND_TO_USER_INBOX`, concluído no app pela
+pessoa criadora. Falta para fechar o M4: app em produção aprovado no portal
+(ícone + vídeo demo anexados, review submetida) — o piloto rodou em sandbox.
 
 **M5 em andamento (fatia 1, 19/09/2026).** Chaves de LLM configuradas e
 `llm-health` OK nos dois free tiers. Primeira rodada real no tema Bonsai 2:

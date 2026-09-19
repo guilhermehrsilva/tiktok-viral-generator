@@ -441,7 +441,7 @@ melhorar o hook de um roteiro que cita número sem fonte.
 | M1 | Radar (HN, Trends, Wikipedia, GDELT) | **concluído** |
 | M2 | Curador: score, filtro de política, dedup por memória | **concluído** |
 | M3 | Pesquisador + roteirista + juiz com rubrica | **concluído** |
-| M4 | Publicador (TikTok, inbox, rótulo AIGC) | **código pronto, sem rede real** — falta app registrado + 1º post no app |
+| M4 | Publicador (TikTok, inbox, rótulo AIGC) | **piloto real em 19/09/2026** — MP4 69s na inbox (`SEND_TO_USER_INBOX`, concluído no app); falta aprovação do app em produção |
 | M5 | Eval: free tier x free tier na mesma rubrica + métricas do post | **em andamento** — `agent eval` (offline) e `agent metrics-record` prontos; 1ª rodada real abaixo |
 
 ## Eval (M5) — primeiros números
