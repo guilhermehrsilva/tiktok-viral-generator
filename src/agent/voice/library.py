@@ -6,10 +6,10 @@ ou escuta) diz -- as 4 amostras em `output/vozes/` existem justamente para a
 escuta calibrar estes metadados.
 
 Lacunas declaradas (19/09/2026):
-- **Voz feminina pt-BR aberta**: nao ha nenhuma nos catalogos Piper. As 3
-  vozes sao masculinas ou a confirmar. Clonagem local (F5-TTS) resolveria,
-  mas o checkpoint pt-BR e CC-BY-NC (sem uso comercial) -- fora, ate haver
-  alternativa comercial.
+- **Voz da Íris**: a apresentadora pede pt-BR feminino medio-grave, e voz
+  feminina pt-BR aberta nao existe nos catalogos Piper. Sem ela, Íris tem
+  rosto e prompt, mas nao tem voz -- e sintetiza-la em timbre masculino
+  quebraria a personagem. Théo usa `jeff` (estilo `theo`).
 - **Sotaque regional**: nenhum modelo aberto reproduz sotaque (paulista,
   carioca, nordestino...). Variedade aqui e troca de locutor, nao de sotaque.
   Fingir sotaque com pitch/velocidade seria caricatura, nao recurso.
@@ -137,6 +137,11 @@ STYLES: dict[str, Style] = {
                         "rapido, dinamico"),
     "calmo": Style("calmo", "Calmo", "faber", 0.90, 0.4, 0.50,
                    "lento, suave"),
+    # Voz do Théo (guia de marca: grave, ritmo 1.0, ênfase nos números).
+    # Íris não tem estilo: sem voz feminina aberta, sintetizá-la em voz
+    # masculina quebraria a personagem -- gap declarado, não gambiarra.
+    "theo": Style("theo", "Théo (tutorial/comparação)", "jeff", 1.0, 0.6, 0.35,
+                  "didático, direto; números com micro-pausa via *enfase*"),
 }
 
 NAMES = sorted(VOICES)

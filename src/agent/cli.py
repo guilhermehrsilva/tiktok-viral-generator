@@ -1198,6 +1198,7 @@ def _checar_slides(slides: list[Path]) -> None:
 @app.command("voice-list")
 def voice_list() -> None:
     """Biblioteca de vozes e estilos (tudo local, $0)."""
+    from agent.brand.brand import load as load_brand
     from agent.voice.library import REJEITADAS, STYLES, VOICES
 
     typer.secho("VOZES (locutor real, um por modelo):", bold=True)
@@ -1208,6 +1209,14 @@ def voice_list() -> None:
     for s in STYLES.values():
         typer.echo(f"  {s.id}: voz={s.voz} vel={s.velocidade} "
                    f"pausa={s.pausa_frase_s}s -- {s.descricao}")
+    brand = load_brand()
+    typer.secho("\nAPRESENTADORES (elenco, nao marca):", bold=True)
+    for p in brand.presenters.values():
+        voz = p.library_voice or "SEM VOZ ABERTA (gap: feminina pt-BR nao existe)"
+        typer.echo(f"  {p.id} ({p.name}): {p.role} | seed={p.seed} | voz={voz}")
+    typer.echo("  formatos com avatar: "
+               + ", ".join(brand.presenter_formats)
+               + " -- fora deles, sem avatar")
     typer.secho("\nFora, com motivo:", bold=True)
     for k, motivo in REJEITADAS.items():
         typer.echo(f"  {k}: {motivo}")
@@ -1325,6 +1334,44 @@ def voice_narrate(
     parede = time.monotonic() - inicio
     typer.echo(f"{out}: {nar.duration_s:.1f}s em {parede:.1f}s "
                f"(RTF {parede / nar.duration_s:.2f}) estilo={style}")
+
+
+@app.command("brand-avatar")
+def brand_avatar(
+    presenter: str = typer.Option(..., "--presenter", help="iris ou theo"),
+    angulo: str = typer.Option("frontal", "--angulo"),
+    expressao: str = typer.Option("neutra", "--expressao"),
+    gesto: str = typer.Option("parada", "--gesto"),
+) -> None:
+    """Imprime o prompt travado de geracao do avatar + checklist de uso.
+
+    A geracao e externa (sem image-gen local $0): este comando garante que o
+    prompt sai inteiro e que as travas viajam junto -- seed, negativo,
+    enquadramento e limites.
+    """
+    from agent.brand.brand import avatar_prompt
+    from agent.brand.brand import load as load_brand
+
+    brand = load_brand()
+    if presenter not in brand.presenters:
+        typer.secho("apresentador desconhecido; use iris ou theo.",
+                    fg=typer.colors.RED)
+        raise typer.Exit(code=2)
+    try:
+        typer.echo(avatar_prompt(presenter, angulo=angulo, expressao=expressao,
+                                 gesto=gesto))
+    except ValueError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED)
+        raise typer.Exit(code=2) from exc
+    p = brand.presenters[presenter]
+    typer.echo("\n--- travas ---")
+    typer.echo(f"seed: {p.seed} (fixo, sempre) | formatos: {', '.join(p.formats)}")
+    typer.echo("enquadramento: 30-36% da altura, direita, peito p/ cima, "
+               "fundo transparente, texto do lado oposto")
+    typer.echo("sai de cena nos 3s finais; nunca em perfil/logo/capa; "
+               "rotulo AIGC ligado")
+    typer.echo("\n--- negativo ---")
+    typer.echo(brand.negative_prompt)
 
 
 if __name__ == "__main__":

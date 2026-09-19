@@ -145,5 +145,60 @@
     "rules": ["no maximo 2 linhas de texto", "5 hashtags", "sem emoji", "sem link"]
   },
   "image_prompt_base": "still cinematográfico, tema: {assunto}.\nfundo: quase-preto #0A0A0C, sombra profunda, sem elementos soltos.\nluz: um único recorte em {accent}, névoa volumétrica leve, alto contraste.\ncomposição: grande área vazia à {lado}, objeto ocupando um terço do quadro.\nformato: vertical 9:16, lente 35mm, grão de filme sutil.\nsem texto, sem pessoas, sem logotipos, sem interface.",
-  "image_prompt_negative": "fundo claro, paleta branca ou pastel, gradiente roxo-rosa de IA, pessoas sorrindo de banco de imagens, rostos, mãos, texto, marca d'água, logotipo, composição poluída, baixo contraste, render 3D plastificado, cartoon, excesso de flare."
+  "image_prompt_negative": "fundo claro, paleta branca ou pastel, gradiente roxo-rosa de IA, pessoas sorrindo de banco de imagens, rostos, mãos, texto, marca d'água, logotipo, composição poluída, baixo contraste, render 3D plastificado, cartoon, excesso de flare.",
+  "presenters": {
+    "usage": {
+      "formats": ["analise", "tutorial", "fato", "vs"],
+      "never": ["foto de perfil", "logo", "capa", "assinatura do canal"],
+      "note": "Elenco, nao marca: fora desses 4 formatos o video roda sem avatar. Rosto nunca na foto de perfil."
+    },
+    "framing": {
+      "height_pct": [30, 36],
+      "align": "right",
+      "crop": "chest-up",
+      "background": "transparent cutout",
+      "exits_last_seconds": 3,
+      "text_side": "opposite"
+    },
+    "consistency": {
+      "locked_prompt": true,
+      "fixed_seed": true,
+      "master_refs": ["frontal", "3/4", "perfil"],
+      "variables_per_video": ["angulo", "expressao", "gesto"]
+    },
+    "limits": [
+      "Nao se parecer com nenhuma pessoa real, publica ou privada.",
+      "Nunca afirmar ser humano; se o roteiro tocar no assunto, assume IA.",
+      "Rotulo AIGC sempre ligado na publicacao."
+    ],
+    "cast": [
+      {
+        "id": "iris",
+        "name": "Íris",
+        "role": "noticia e analise",
+        "formats": ["analise", "fato"],
+        "gender": "feminino",
+        "seed": 481502,
+        "voice": {"lang": "pt-BR", "pitch": "medio-grave", "rate": 0.95, "note": "pausa apos o gancho", "library_voice": null},
+        "identity_prompt": "ÍRIS — identidade travada, não editar.\nMulher brasileira, 29 anos, pele parda média, traços miscigenados suaves, cabelo castanho-escuro ondulado preso baixo com fios soltos na têmpora, olhos castanho-escuros, sobrancelhas naturais marcadas, sem maquiagem aparente.\nFigurino: gola alta preta lisa, sem estampa, sem joia, sem logotipo.\nLuz: chave fria suave à esquerda, recorte #39FF88 no ombro direito, fundo quase-preto #0A0A0C.\nEnquadramento: do peito para cima, 35mm, profundidade rasa, grão sutil, fotorrealista.\nseed: 481502 · mesmo seed em toda geração."
+      },
+      {
+        "id": "theo",
+        "name": "Théo",
+        "role": "tutorial e comparacao",
+        "formats": ["tutorial", "vs"],
+        "gender": "masculino",
+        "seed": 907314,
+        "voice": {"lang": "pt-BR", "pitch": "grave", "rate": 1.0, "note": "enfase nos numeros", "library_voice": "jeff"},
+        "identity_prompt": "THÉO — identidade travada, não editar.\nHomem brasileiro, 34 anos, pele parda clara, traços miscigenados, cabelo preto curto penteado para trás, barba curta aparada, olhos castanho-escuros, expressão neutra, sem sorriso de catálogo.\nFigurino: camiseta preta lisa de gola redonda, sem estampa, sem acessório.\nLuz: chave fria suave à direita, recorte #39FF88 no ombro esquerdo, fundo quase-preto #0A0A0C.\nEnquadramento: do peito para cima, 35mm, profundidade rasa, grão sutil, fotorrealista.\nseed: 907314 · mesmo seed em toda geração."
+      }
+    ],
+    "variation_prompt": "{prompt_de_identidade}\n\nângulo: {frontal | 3/4 esquerda | 3/4 direita}\nexpressão: {neutra | concentrada | uma sobrancelha erguida}\ngesto: {parada | leve inclinação de cabeça | mão aberta na altura do peito}\n\nTodo o resto permanece idêntico. Nunca alterar rosto, cabelo, figurino, luz ou seed.\nSaída: recorte com fundo transparente, vertical, do peito para cima.",
+    "variation_slots": {
+      "angulo": ["frontal", "3/4 esquerda", "3/4 direita"],
+      "expressao": ["neutra", "concentrada", "uma sobrancelha erguida"],
+      "gesto": ["parada", "leve inclinação de cabeça", "mão aberta na altura do peito"]
+    },
+    "negative_prompt": "semelhança com pessoa real ou pública, rosto de celebridade, expressão de banco de imagens sorrindo, sorriso aberto com dentes, fundo claro ou branco, fundo com gradiente colorido, ciclorama de estúdio, óculos, chapéu, joia, camisa estampada, logotipo, tatuagem, maquiagem pesada, pele com filtro de beleza, render 3D plastificado, cartoon, anime, dedos a mais, mãos distorcidas, texto, marca d'água."
+  }
 }

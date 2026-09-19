@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 
 from agent.brand.brand import (
+    avatar_prompt,
     load,
     suggest_content_pillar,
     voice_brief,
@@ -45,6 +46,33 @@ class TestVetor:
     def test_voz_tem_as_regras(self):
         texto = voice_brief()
         assert "12 palavras" in texto and "emoji" in texto
+
+
+class TestApresentadores:
+    def test_elenco_com_seeds_e_formatos(self):
+        brand = load()
+        assert sorted(brand.presenters) == ["iris", "theo"]
+        assert brand.presenters["iris"].seed == 481502
+        assert brand.presenters["theo"].seed == 907314
+        assert brand.presenter_for("analise").id == "iris"
+        assert brand.presenter_for("tutorial").id == "theo"
+        assert brand.presenter_for("news") is None
+        assert brand.presenter_for("futuro") is None
+
+    def test_vozes_mapeadas_sem_invencao(self):
+        brand = load()
+        assert brand.presenters["theo"].library_voice == "jeff"
+        assert brand.presenters["iris"].library_voice is None
+
+    def test_prompt_travado_com_variaveis(self):
+        texto = avatar_prompt("iris", expressao="concentrada")
+        assert "seed: 481502" in texto and "concentrada" in texto
+        assert "fundo transparente" in texto
+
+    def test_variavel_fora_da_lista_falha(self):
+        import pytest
+        with pytest.raises(ValueError):
+            avatar_prompt("theo", gesto="dancando")
 
 
 class TestPortoes:

@@ -199,6 +199,14 @@ engole o erro; chave no CLI vem de `AGENT_PEXELS_API_KEY` (Settings), não de
 `os.environ`. Groq-long `json_validate_failed` recorrente + 429 geral no fim
 do dia: rodada2 saiu com short novo, long/slides reaproveitados da rodada1.
 
+Fatia 7 (19/09/2026): apresentadores do guia (Íris + Théo) no ecossistema.
+`brand.json` ganhou `presenters` (prompts de identidade, seeds, negativo);
+`presenter_for` trava por formato (só analise/tutorial/fato/vs, resto sem
+avatar); `brand-avatar` imprime prompt travado + travas (geração é externa:
+sem image-gen local $0). Voz: Théo usa `jeff` (estilo `theo`, amostra em
+`output/vozes/amostra_theo.wav`); Íris segue sem voz aberta (gap declarado,
+não gambiarra com timbre masculino).
+
 ---
 
 ## Regras ao mexer aqui
