@@ -397,6 +397,14 @@ def _violacoes_de_contrato(exc: ValidationError) -> list[str]:
     return saida
 
 
+# Exemplo de 15s que cabe na faixa: o modelo imita o tamanho, nao so o tom.
+SHORT_EXAMPLE = (
+    "hook: Um modelo gigante cabe no seu bolso?\n"
+    "body: O Bonsai 2 tem vinte e sete bilhões de parâmetros em só cinco "
+    "vírgula nove gigabytes. Nove vezes menor, quase tudo do desempenho.\n"
+    "closing: Gigante no bolso: o que mais vai encolher?")
+
+
 def build_prompt(dossier: Dossier, correcoes: list[str] | None = None,
                  mode: str = "long") -> str:
     """Monta o prompt do roteiro. Funcao livre para o teste inspecionar o texto."""
@@ -421,9 +429,12 @@ def build_prompt(dossier: Dossier, correcoes: list[str] | None = None,
     duracao_txt = (
         f"Isso equivale a {MIN_DURATION_S}-{MAX_DURATION_S}s falados e e "
         "requisito de monetizacao, nao preferencia.\n"
-        if mode == "long" else
-        "Video curto de alcance (~15s): nao monetiza, pesca publico. "
-        "Uma ideia so.\n")
+           if mode == "long" else
+           "Video curto de alcance (~15s): nao monetiza, pesca publico. "
+           "Uma ideia so, apoiada em 1 ou 2 fatos no maximo -- nao tente "
+           "cobrir o dossie inteiro. Conte as palavras da narracao antes de "
+           "responder: se passar do teto, corte frases inteiras ate caber -- "
+           "nao entregue acima do teto.\n")
 
     partes = [
         f"TEMA: {dossier.topic}\n",
@@ -442,6 +453,9 @@ def build_prompt(dossier: Dossier, correcoes: list[str] | None = None,
         "ESTETICA, nunca um conceito abstrato ('innovation').\n"
         "- used_facts: os indices dos fatos do dossie em que o roteiro se apoia.\n",
         visual_brief(suggest_pillar(dossier.topic)),
+        *([] if mode != "short" else [
+            "EXEMPLO DE TAMANHO (15s: copie a extensao, nao o texto)\n"
+            + SHORT_EXAMPLE]),
         "REGRAS\n"
         f"- A narracao inteira (hook + body + closing) precisa ter entre "
         f"{minimo} e {maximo} palavras, ou seja cerca de {alvo}. "

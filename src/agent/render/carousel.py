@@ -32,13 +32,20 @@ CINZA = (160, 170, 185)
 
 FONT_CANDIDATES = (
     "BeVietnamPro-Bold.ttf",
-    "/app/.renderer/resource/fonts/BeVietnamPro-Bold.ttf",
+    ".renderer/resource/fonts/BeVietnamPro-Bold.ttf",
 )
+
+
+def _project_font() -> str | None:
+    """O ttf que cobre pt-BR, o mesmo da legenda do video."""
+    from agent.config import PROJECT_ROOT
+    cand = PROJECT_ROOT / ".renderer" / "resource" / "fonts" / "BeVietnamPro-Bold.ttf"
+    return str(cand) if cand.is_file() else None
 
 
 def _fonte(tamanho: int, extra: str | None = None,
            ) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    cands = ((extra,) if extra else ()) + FONT_CANDIDATES
+    cands = [c for c in (extra, _project_font(), *FONT_CANDIDATES) if c]
     for cand in cands:
         try:
             return ImageFont.truetype(str(cand), tamanho)

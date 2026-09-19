@@ -157,7 +157,19 @@ média); `agent metrics-record` grava a série por `publish_id` com `script_id`
 opcional fechando o loop. Fatia 2 (19/09/2026): vocabulário visual do canal dark
 (`writer/visuals.py`, 4 pilares A–D, tags fixas em inglês) com portão mecânico
 no roteirista — validado com o gemini real (5 termos, pilar C, 1ª tentativa).
-Falta: conjunto fixo com 2–3 temas (hoje só Bonsai 2)
+Fatia 3 (19/09/2026): humanizer como estágio (`writer/humanize.py`, adaptado
+do `blader/humanizer` MIT: scan determinístico pt-BR + 1 reescrita travada por
+grounding) e 3 formatos — `long` (contrato atual), `short` (~40 palavras, loop,
+faixa 30–50), `carousel` (5 slides, teto 15/slide, save no 5, número no 1) com
+juiz (6/8), slides PNG 1080x1920 (`render/carousel.py`, Pillow) e eval/métricas
+por formato (saves/comments/shares). Roteamento medido: gemini escreve longo
+mas estoura o curto (60–80 palavras, 3 rodadas); groq escreve curto (42) e
+carrossel (8/8) de 1ª — e escreveu longo OK uma vez (176, 12/14), então o
+`json_validate_failed` anterior pode ser prompt/transiente, não veredito.
+Cota gemini 429 no fim do dia após uso intenso; groq segurou a rodada.
+Calibrações: mirar 12 para caber no teto 15; exemplo de 40 palavras no prompt
+short; número ≤5 isento do portão numérico do carrossel (é a contagem dos
+slides). Falta: conjunto fixo com 2–3 temas (hoje só Bonsai 2)
 e as primeiras métricas reais do app.
 
 ---

@@ -163,7 +163,9 @@ def _violacoes(carrossel: Carousel, dossier: Dossier, fora: list[int]) -> list[s
         if s.word_count > CAROUSEL_MAX_WORDS_PER_SLIDE:
             problemas.append(
                 f"slide {s.n} tem {s.word_count} palavras (teto "
-                f"{CAROUSEL_MAX_WORDS_PER_SLIDE}): slide se le em 3 segundos.")
+                f"{CAROUSEL_MAX_WORDS_PER_SLIDE}): corte "
+                f"{s.word_count - CAROUSEL_MAX_WORDS_PER_SLIDE} palavras, "
+                "slide se le em 3 segundos.")
     s1 = carrossel.slides[0]
     if not _DIGITO.search(f"{s1.headline} {s1.text}"):
         problemas.append(
@@ -215,7 +217,8 @@ def build_prompt(dossier: Dossier, correcoes: list[str] | None = None) -> str:
         "- slides 2-4: revelacao progressiva, um dado novo por slide; o melhor "
         "dado no 3 ou 4 (value bomb).\n"
         "- slide 5: conclusao + 'salve para depois'.\n"
-        "- cada slide: headline curta + text de no maximo 15 palavras.\n"
+        "- cada slide: headline curta + text de no maximo 12 palavras "
+        "(mire 12 para caber no teto de 15).\n"
         "- caption: uma linha com a palavra-chave + UMA pergunta.\n"
         "- visual: tag COPIADA da lista de ESTETICA, um pilar so.\n"
         "- used_facts: indices do dossie.\n",

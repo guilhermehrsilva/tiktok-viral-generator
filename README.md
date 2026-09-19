@@ -457,6 +457,13 @@ publicar. A comparação é free tier x free tier:
 | juiz (mesmo roteiro) | 12/14 APROVADO | **14/14 APROVADO** — 2 pontos mais generoso (hook 2x1, ponto de vista 2x1) |
 
 `produce` gemini ponta a ponta: APROVADO 12/14, 186 palavras, 2038 in / 648 out.
+Rodada 3 formatos em 19/09/2026 (tema Bonsai 2, `output/rodada/`):
+`short` groq 42 palavras APROVADO 13/14; `carousel` groq 8/8 com 5 slides
+1080x1920; `long` groq 176 palavras APROVADO 12/14. Roteamento medido: gemini
+estoura o curto (60–80 palavras, sem convergir); groq escreve os três de 1ª.
+Humanizer (`writer/humanize.py`, adaptado do `blader/humanizer` MIT) roda
+após o aceite mecânico: scan de tells pt-BR, 1 reescrita travada por
+grounding, original intacto se quebrar número ou faixa.
 Métricas do post (`agent metrics-record`) são lidas no app à mão: a inbox não
 expõe endpoint de métricas e a Research API é restrita a pesquisa acadêmica.
 
