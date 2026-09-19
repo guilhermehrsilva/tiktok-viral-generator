@@ -207,6 +207,17 @@ sem image-gen local $0). Voz: Théo usa `jeff` (estilo `theo`, amostra em
 `output/vozes/amostra_theo.wav`); Íris segue sem voz aberta (gap declarado,
 não gambiarra com timbre masculino).
 
+Fatia 8 — anti-repetição + preflight (19/09/2026): curador re-checa dups
+contra o ledger corrido (top-3 do dia sai distinto); `curate --top 3` +
+`--cooldown-days`; `research --topic` documentado como atualização
+intencional; `agent status` (resumo da memória); `agent preflight`
+(parecer ligado via script_id + MP4 medido + checklist humano); outputs em
+`output/YYYY-MM-DD/HHMM-tema-formato/`. Calibrações da rodada: pool
+case-insensitive (UI maiúsculo quebrava); sujeito por nome próprio, mínimo 1;
+`AGENT_GROQ_REASONING_EFFORT=low` destrava o writer groq (reasoning comia o
+orçamento do JSON); intervalo "25 a 300" conta como um número. Pendente de
+cota: long do dia (gemini 429 diário + groq só escreve curto com low).
+
 ---
 
 ## Regras ao mexer aqui
