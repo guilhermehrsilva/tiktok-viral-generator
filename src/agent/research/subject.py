@@ -25,30 +25,38 @@ _STOP = frozenset({
 
 
 def subject_terms(topic: str) -> list[str]:
-    """Identificadores do assunto, em ordem, sem repetir (minusculos)."""
+    """Identificadores do assunto, em ordem, sem repetir (minusculos).
+
+    Entra nome proprio (maiuscula no titulo: "Bonsai", "Stanford") e
+    codinome com letra+digito ("27B"). Fora: minuscula comum ("modelo"),
+    numero puro ("5,9") e curto demais. Titulo em ingles com resto em
+    portugues nao e problema: nome proprio nao traduz.
+    """
     termos: list[str] = []
     for bruto in _TOKEN.findall(topic):
+        if not bruto[:1].isupper() and not _tem_nome(bruto):
+            continue
         t = bruto.lower()
-        tem_digito = any(c.isdigit() for c in t)
-        tem_letra = any(c.isalpha() for c in t)
-        if tem_digito and tem_letra:
-            pass  # 27b, gpt-4: nome, entra sempre
-        elif len(t) < 6 or t in _STOP or not tem_letra:
-            continue  # curto, gramatical ou numero puro: nao e identidade
+        if len(t) < 3 or t in _STOP:
+            continue
         if t not in termos:
             termos.append(t)
     return termos
 
 
-def missing_subject(text: str, topic: str, minimum: int = -1) -> list[str]:
-    """Identificadores ausentes. `minimum` = quantos precisam aparecer.
+def _tem_nome(token: str) -> bool:
+    """Letra+digito colados: 27B, GPT-4 (o hifen separa no token)."""
+    tem_digito = any(c.isdigit() for c in token)
+    tem_letra = any(c.isalpha() for c in token)
+    return tem_digito and tem_letra and len(token) >= 2
 
-    Video pede todos (minimum = total); carrossel pede 1 -- slide tem 12
-    palavras e nao comporta a ficha completa, mas precisa ancorar o assunto.
+
+def missing_subject(text: str, topic: str, minimum: int = 1) -> list[str]:
+    """Identificadores ausentes. Basta 1: o bug a matar e o anonimato total
+    ("um modelo"), nao a ficha incompleta. A lista de faltantes vai ao modelo
+    para ele completar o que couber.
     """
     termos = subject_terms(topic)
-    if minimum < 0:
-        minimum = len(termos)
     baixa = text.lower()
     ausentes = [t for t in termos if t not in baixa]
     if len(termos) - len(ausentes) >= minimum:

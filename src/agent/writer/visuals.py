@@ -70,14 +70,14 @@ PILLARS: dict[str, Pillar] = {
     ),
 }
 
-_TAG_TO_PILLAR: dict[str, str] = {
-    tag: pid for pid, p in PILLARS.items() for tag in p.tags
-}
-
-
 def normalize(term: str) -> str:
     """Minuscula e espaco simples: '  Bionic  Eye NEON ' casa com o pool."""
     return " ".join(term.lower().split())
+
+
+_TAG_TO_PILLAR: dict[str, str] = {
+    normalize(tag): pid for pid, p in PILLARS.items() for tag in p.tags
+}
 
 
 def pillar_of(terms: list[str]) -> str | None:
