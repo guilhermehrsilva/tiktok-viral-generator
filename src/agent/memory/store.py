@@ -124,6 +124,19 @@ CREATE TABLE IF NOT EXISTS reviews (
     FOREIGN KEY (script_id) REFERENCES scripts(id)
 );
 CREATE INDEX IF NOT EXISTS idx_reviews_script ON reviews(script_id, created_at DESC);
+
+-- Publicacao e uma relacao de um para muitos com o video: o mesmo MP4 pode ser
+-- reenviado (ex. upload interrompido gerou outro publish_id), e o motivo de
+-- cada tentativa precisa ficar gravado para calibrar -- mesma regra do ledger.
+CREATE TABLE IF NOT EXISTS posts (
+    id            INTEGER PRIMARY KEY,
+    publish_id    TEXT    NOT NULL,
+    video_path    TEXT    NOT NULL,
+    status        TEXT    NOT NULL,
+    error         TEXT,
+    created_at    TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_posts_publish ON posts(publish_id, created_at DESC);
 """
 
 
@@ -362,6 +375,57 @@ class SignalStore:
     def review_count(self) -> int:
         with self._conn() as conn:
             return int(conn.execute("SELECT COUNT(*) AS n FROM reviews").fetchone()["n"])
+
+    # ------------------------------------------------------------------ posts
+
+    def record_post(
+        self,
+        publish_id: str,
+        video_path: str,
+        *,
+        status: str,
+        error: str | None = None,
+    ) -> int:
+        """Grava uma subida a inbox, com ou sem publish_id da API.
+
+        Falha antes do init (ex. arquivo inexistente) tambem e gravada, com
+        publish_id vazio: sem isso, tentativa que nao gerou nada some do
+        historico e nao entra na calibracao.
+        """
+        with self._conn() as conn:
+            cur = conn.execute(
+                "INSERT INTO posts (publish_id, video_path, status, error, created_at)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (
+                    publish_id, video_path, status, error,
+                    datetime.now(UTC).isoformat(),
+                ),
+            )
+        return int(cur.lastrowid or 0)
+
+    def update_post_status(
+        self, publish_id: str, *, status: str, error: str | None = None
+    ) -> None:
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE posts SET status = ?, error = ? WHERE publish_id = ?",
+                (status, error, publish_id),
+            )
+
+    def latest_post(self, video_path: str | None = None) -> dict | None:
+        sql = "SELECT publish_id, video_path, status, error, created_at FROM posts"
+        params: tuple = ()
+        if video_path:
+            sql += " WHERE video_path = ?"
+            params = (video_path,)
+        sql += " ORDER BY created_at DESC, id DESC LIMIT 1"
+        with self._conn() as conn:
+            row = conn.execute(sql, params).fetchone()
+        return dict(row) if row else None
+
+    def post_count(self) -> int:
+        with self._conn() as conn:
+            return int(conn.execute("SELECT COUNT(*) AS n FROM posts").fetchone()["n"])
 
 
 def _parse_iso(value: str) -> datetime:

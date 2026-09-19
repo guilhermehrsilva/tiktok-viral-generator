@@ -8,10 +8,12 @@ o [MoneyPrinterTurbo](https://github.com/harry0703/MoneyPrinterTurbo) (MIT) faz 
 bem. O que não existe é a metade de cima: **descobrir o que vale a pena falar, e provar
 que o que se fala é verdade.** É essa metade que este repositório constrói.
 
-> Estado atual: **M3 concluído** — o agente vai do tema em alta ao MP4 sozinho:
+> Estado atual: **M4 (código pronto, sem post real)** — o agente vai do tema em alta
+> ao MP4 sozinho e sobe para a inbox do TikTok via Content Posting API:
 > curador escolhe, pesquisador ancora cada fato numa URL, roteirista escreve na
 > faixa de monetização, juiz aplica a rubrica de 7 critérios e devolve para
-> revisão, renderizador produz. Veja [Marcos](#marcos).
+> revisão, renderizador produz, publicador entrega na inbox. Falta o primeiro
+> post real no app (exige app registrado + OAuth). Veja [Marcos](#marcos).
 
 ## Por que grounding com citação não é enfeite
 
@@ -439,7 +441,7 @@ melhorar o hook de um roteiro que cita número sem fonte.
 | M1 | Radar (HN, Trends, Wikipedia, GDELT) | **concluído** |
 | M2 | Curador: score, filtro de política, dedup por memória | **concluído** |
 | M3 | Pesquisador + roteirista + juiz com rubrica | **concluído** |
-| M4 | Publicador (TikTok, inbox, rótulo AIGC) | a fazer |
+| M4 | Publicador (TikTok, inbox, rótulo AIGC) | **código pronto, sem rede real** — falta app registrado + 1º post no app |
 | M5 | Eval: free tier vs. modelo pago na mesma rubrica | a fazer |
 
 ## Limites conhecidos

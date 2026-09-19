@@ -93,6 +93,18 @@ class Settings(BaseSettings):
     # cota gasta em menu e rodape.
     research_page_chars: int = 8000
 
+    # --- publicador (TikTok Content Posting API, inbox, M4) ---
+    # Inbox nao exige auditoria do app; o preco e que titulo, descricao e o
+    # rotulo AIGC sao aplicados no app, nao pela API. Segredos so no .env.
+    tiktok_client_key: str = ""
+    tiktok_client_secret: str = ""
+    tiktok_redirect_uri: str = ""
+    tiktok_access_token: str = ""
+    tiktok_refresh_token: str = ""
+    # Chunk do PUT de bytes. < 5 MB sobe em 1 chunk; > 64 MB exige multiplos.
+    tiktok_chunk_size: int = 10_000_000
+    tiktok_timeout_s: float = 60.0
+
     # --- armazenamento ---
     data_dir: Path = PROJECT_ROOT / "data"
     output_dir: Path = PROJECT_ROOT / "output"

@@ -385,3 +385,32 @@ class Decision(BaseModel):
     @property
     def approved(self) -> bool:
         return self.verdict is Verdict.selected
+
+
+class PublishState(StrEnum):
+    """Desfecho da subida para a inbox.
+
+    `uploaded` nao significa "postado": significa que o video chegou a inbox e
+    a conclusao (legenda, rotulo AIGC, publicar) acontece no app, pela pessoa
+    criadora. Automatizar alem disso seria Direct Post, que exige auditoria.
+    """
+
+    uploaded = "uploaded"
+    failed = "failed"
+
+
+class PublishResult(BaseModel):
+    """O que o publicador devolve. `publish_id` rastreia o post na API."""
+
+    state: PublishState
+    publish_id: str | None = None
+    video_path: str | None = None
+    error: str | None = None
+
+    @model_validator(mode="after")
+    def _coerencia(self) -> PublishResult:
+        if self.state is PublishState.uploaded and not self.publish_id:
+            raise ValueError("upload para a inbox sem publish_id")
+        if self.state is PublishState.failed and not self.error:
+            raise ValueError("publicacao falhou sem mensagem de erro")
+        return self

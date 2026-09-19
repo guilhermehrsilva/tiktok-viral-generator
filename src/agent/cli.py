@@ -722,5 +722,94 @@ def health() -> None:
     sys.exit(0 if alive else 1)
 
 
+@app.command()
+def publish(
+    video: Path = typer.Option(..., "--video", "-v", exists=True, readable=True),
+) -> None:
+    """Sobe um MP4 para a inbox do TikTok (escopo video.upload, sem auditoria).
+
+    O endpoint inbox so recebe os bytes: titulo, descricao e rotulo AIGC sao
+    aplicados por voce no app, ao concluir o post pela notificacao da inbox.
+    Por isso este comando termina com o checklist manual -- e o rotulo AIGC
+    nao tem flag para desligar porque nao e opcional.
+    """
+    from agent.adapters.tiktok_publisher import TikTokPublisher
+    from agent.memory.store import SignalStore
+    from agent.models import PublishState
+
+    token = settings.tiktok_access_token
+    if not token:
+        typer.secho(
+            "sem AGENT_TIKTOK_ACCESS_TOKEN no .env (git-ignored).\n"
+            "Registre o app em developers.tiktok.com, autorize o escopo "
+            "video.upload e grave o token.",
+            fg=typer.colors.RED,
+        )
+        raise typer.Exit(code=2)
+
+    typer.echo(f"video     : {video} ({video.stat().st_size} bytes)")
+    typer.echo("subindo para a inbox (init + chunks)...")
+    result = TikTokPublisher().upload(str(video), access_token=token)
+
+    store = SignalStore(settings.db_path)
+    store.record_post(
+        result.publish_id or "",
+        str(video),
+        status=result.state.value,
+        error=result.error,
+    )
+
+    if result.state is not PublishState.uploaded:
+        typer.secho(f"subida falhou: {result.error}", fg=typer.colors.RED)
+        raise typer.Exit(code=1)
+
+    typer.secho(f"\npublish_id: {result.publish_id}", fg=typer.colors.GREEN)
+    typer.echo("gravado em posts. Agora, no app do TikTok:")
+    typer.echo("  1. abra a notificacao da inbox e conclua a edicao;")
+    typer.echo("  2. LIGUE o rotulo de conteudo gerado por IA (obrigatorio);")
+    typer.echo("  3. confira que a legenda cita as fontes do roteiro.")
+
+
+@app.command("publish-status")
+def publish_status(
+    publish_id: str = typer.Option(..., "--publish-id"),
+) -> None:
+    """Consulta o estado de um post na API e atualiza a tabela posts."""
+    from agent.adapters.tiktok_publisher import TikTokPublisher
+    from agent.memory.store import SignalStore
+
+    token = settings.tiktok_access_token
+    if not token:
+        typer.secho("sem AGENT_TIKTOK_ACCESS_TOKEN no .env.", fg=typer.colors.RED)
+        raise typer.Exit(code=2)
+
+    try:
+        estado = TikTokPublisher().fetch_status(publish_id, access_token=token)
+    except Exception as exc:
+        typer.secho(f"falha: {exc}", fg=typer.colors.RED)
+        raise typer.Exit(code=1) from exc
+
+    SignalStore(settings.db_path).update_post_status(publish_id, status=estado)
+    typer.echo(f"{publish_id}: {estado}")
+
+
+@app.command("tiktok-auth-url")
+def tiktok_auth_url(
+    state: str = typer.Option("", "--state"),
+) -> None:
+    """Imprime a URL para autorizar o app no navegador (escopo video.upload)."""
+    from agent.adapters.tiktok_oauth import authorize_url
+
+    if not settings.tiktok_client_key or not settings.tiktok_redirect_uri:
+        typer.secho(
+            "configure AGENT_TIKTOK_CLIENT_KEY e AGENT_TIKTOK_REDIRECT_URI no .env.",
+            fg=typer.colors.RED,
+        )
+        raise typer.Exit(code=2)
+    typer.echo(authorize_url(
+        settings.tiktok_client_key, settings.tiktok_redirect_uri, state=state,
+    ))
+
+
 if __name__ == "__main__":
     app()

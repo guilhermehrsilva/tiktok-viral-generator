@@ -29,7 +29,15 @@ O que já roda ponta a ponta, a custo zero:
 | `uv run agent render --script <json>` | produz MP4 1080x1920 com narração pt-BR e legenda karaokê |
 | `uv run agent health` | checa se o renderizador responde |
 
-**A próxima lacuna é a publicação.** Hoje o MP4 fica em `output/` e ninguém o sobe. É o M4.
+| `uv run agent publish --video <mp4>` | sobe o MP4 para a inbox do TikTok e grava o publish_id |
+| `uv run agent publish-status --publish-id <id>` | consulta o estado e atualiza `posts` |
+| `uv run agent tiktok-auth-url` | imprime a URL de autorização OAuth (escopo video.upload) |
+
+**M4 está com o código pronto e testado sem rede (365 testes).** Falta a parte
+que só existe com conta: registrar o app em developers.tiktok.com (escopo
+`video.upload`), autorizar via `tiktok-auth-url`, gravar
+`AGENT_TIKTOK_ACCESS_TOKEN` no `.env` e conferir o primeiro post real no app
+-- inbox + rótulo AIGC ligado manualmente, que o endpoint inbox não recebe.
 
 O aceite do M3 é conferível agora, sem chave nenhuma:
 
