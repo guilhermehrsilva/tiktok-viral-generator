@@ -172,6 +172,14 @@ short; número ≤5 isento do portão numérico do carrossel (é a contagem dos
 slides). Falta: conjunto fixo com 2–3 temas (hoje só Bonsai 2)
 e as primeiras métricas reais do app.
 
+Fatia 4 (19/09/2026): estúdio de vozes local (`agent/voice/`, Piper/VITS em
+CPU, RTF ~0,05–0,1 no i5). 3 vozes MIT/CC0 (razo/faber/jeff) + 10 estilos
+(documental..calmo) como interpretação sobre os timbres; `voice-narrate` do
+roteiro ao wav com `[PAUSA]` e `*enfase*`. Rejeitados com motivo: edresson-low
+(nasal corrompida), F5/XTTS (NC/não-comercial), Bark (lento em CPU), Kokoro
+(sem voz pt-BR). Lacunas: voz feminina aberta não existe; sotaque regional
+ninguém reproduz (variedade = locutor). Amostras em `output/vozes/`.
+
 ---
 
 ## Regras ao mexer aqui

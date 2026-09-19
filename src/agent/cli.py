@@ -1180,5 +1180,137 @@ def _checar_slides(slides: list[Path]) -> None:
         raise typer.Exit(code=1)
 
 
+@app.command("voice-list")
+def voice_list() -> None:
+    """Biblioteca de vozes e estilos (tudo local, $0)."""
+    from agent.voice.library import REJEITADAS, STYLES, VOICES
+
+    typer.secho("VOZES (locutor real, um por modelo):", bold=True)
+    for v in VOICES.values():
+        typer.echo(f"  {v.id}: {v.nome} | {v.genero}, {v.idade_aparente} | "
+                   f"{v.timbre} | licenca: {v.licenca}")
+    typer.secho("\nESTILOS (interpretacao sobre os timbres):", bold=True)
+    for s in STYLES.values():
+        typer.echo(f"  {s.id}: voz={s.voz} vel={s.velocidade} "
+                   f"pausa={s.pausa_frase_s}s -- {s.descricao}")
+    typer.secho("\nFora, com motivo:", bold=True)
+    for k, motivo in REJEITADAS.items():
+        typer.echo(f"  {k}: {motivo}")
+
+
+@app.command("voice-fetch")
+def voice_fetch(
+    voice: str = typer.Option("", "--voice", help="id; vazio baixa todas"),
+) -> None:
+    """Baixa modelos de voz para data/voices/ (git-ignored, ~63 MB cada)."""
+    import urllib.request
+
+    from agent.voice.library import VOICES
+
+    settings.ensure_dirs()
+    destino = settings.data_dir / "voices"
+    destino.mkdir(parents=True, exist_ok=True)
+    alvos = [VOICES[voice]] if voice else list(VOICES.values())
+    if voice and voice not in VOICES:
+        typer.secho(f"voz {voice!r} desconhecida; veja `voice-list`.",
+                    fg=typer.colors.RED)
+        raise typer.Exit(code=2)
+    for v in alvos:
+        pares = [(v.modelo_url, v.arquivo),
+                 (v.config_url or v.modelo_url + ".json", v.arquivo + ".json")]
+        for url, nome in pares:
+            caminho = destino / nome
+            if caminho.exists():
+                typer.echo(f"  {nome}: ja existe, pulando")
+                continue
+            typer.echo(f"  baixando {nome} (~63 MB)...")
+            urllib.request.urlretrieve(url, caminho)
+        typer.secho(f"[OK  ] {v.id}", fg=typer.colors.GREEN)
+
+
+def _voice_engine(voice_id: str):
+    """Adaptador Piper a partir de data/voices/. Falha explicando o fetch."""
+    from agent.voice.engine import PiperTTS
+    from agent.voice.library import VOICES
+
+    if voice_id not in VOICES:
+        raise ValueError(f"voz {voice_id!r} desconhecida; veja `voice-list`")
+    modelo = settings.data_dir / "voices" / VOICES[voice_id].arquivo
+    if not modelo.exists():
+        raise ValueError(f"modelo {modelo} ausente; rode `voice-fetch --voice {voice_id}`")
+    return PiperTTS(modelo)
+
+
+@app.command("voice-say")
+def voice_say(
+    voice: str = typer.Option(..., "--voice"),
+    text: str = typer.Option("", "--text"),
+    text_file: Path = typer.Option(None, "--text-file"),
+    out: Path = typer.Option(..., "--out", "-o"),
+    speed: float = typer.Option(1.0, "--speed", min=0.5, max=2.0),
+    noise: float = typer.Option(0.667, "--noise", min=0.0, max=1.5),
+) -> None:
+    """Um texto, uma voz, um wav. Amostra rapida antes de narrar roteiro."""
+    import time
+
+    from agent.voice.narrate import Narrator
+
+    corpo = text or (text_file.read_text(encoding="utf-8") if text_file else "")
+    if not corpo.strip():
+        typer.secho("texto vazio; use --text ou --text-file.", fg=typer.colors.RED)
+        raise typer.Exit(code=2)
+    try:
+        motor = _voice_engine(voice)
+    except (ValueError, Exception) as exc:
+        typer.secho(str(exc), fg=typer.colors.RED)
+        raise typer.Exit(code=2) from exc
+    inicio = time.monotonic()
+    nar = Narrator(motor).narrate(corpo, speed=speed, noise=noise)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    nar.write_wav(str(out))
+    parede = time.monotonic() - inicio
+    typer.echo(f"{out}: {nar.duration_s:.1f}s de audio em {parede:.1f}s "
+               f"(RTF {parede / nar.duration_s:.2f}, {nar.utterances} falas)")
+
+
+@app.command("voice-narrate")
+def voice_narrate(
+    script: Path = typer.Option(..., "--script", "-s", exists=True, readable=True),
+    style: str = typer.Option("documental", "--style"),
+    voice: str = typer.Option("", "--voice", help="troca o locutor do estilo"),
+    out: Path = typer.Option(..., "--out", "-o"),
+) -> None:
+    """Roteiro (hook+body+closing) para wav com o estilo do canal."""
+    import time
+
+    from agent.models import Script
+    from agent.voice.library import STYLES
+    from agent.voice.narrate import Narrator
+
+    if style not in STYLES:
+        typer.secho(f"estilo {style!r} desconhecido; veja `voice-list`.",
+                    fg=typer.colors.RED)
+        raise typer.Exit(code=2)
+    perfil = STYLES[style]
+    try:
+        roteiro = Script.model_validate_json(script.read_text(encoding="utf-8"))
+    except ValueError as exc:
+        typer.secho(f"roteiro invalido: {exc}", fg=typer.colors.RED)
+        raise typer.Exit(code=2) from exc
+    try:
+        motor = _voice_engine(voice or perfil.voz)
+    except (ValueError, Exception) as exc:
+        typer.secho(str(exc), fg=typer.colors.RED)
+        raise typer.Exit(code=2) from exc
+    inicio = time.monotonic()
+    nar = Narrator(motor, pausa_frase_s=perfil.pausa_frase_s).narrate(
+        roteiro.narration, speed=perfil.velocidade, noise=perfil.ruido)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    nar.write_wav(str(out))
+    parede = time.monotonic() - inicio
+    typer.echo(f"{out}: {nar.duration_s:.1f}s em {parede:.1f}s "
+               f"(RTF {parede / nar.duration_s:.2f}) estilo={style}")
+
+
 if __name__ == "__main__":
     app()

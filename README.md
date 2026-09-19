@@ -433,6 +433,30 @@ agradar a rubrica. Melhor reprovar com o motivo gravado e escolher outro tema.
 As notas de revisão vão ordenadas por custo: **veto primeiro**. Não adianta
 melhorar o hook de um roteiro que cita número sem fonte.
 
+## Estúdio de vozes (TTS local, $0)
+
+Narração pt-BR em CPU com Piper/VITS (`agent voice-*`): 176 palavras em ~5s
+(RTF ~0,05–0,1 medido em i5 sem GPU). Biblioteca em `agent/voice/library.py`,
+modelos em `data/voices/` (git-ignored), amostras em `output/vozes/`.
+
+| Modelo | PT-BR | Vozes | Clonagem | Sotaque | CPU | Licença | Veredito |
+|---|---|---|---|---|---|---|---|
+| Piper + razo | sim, tech | 1 masc. | não | neutro | RTF 0,08 | MIT | **base do canal** |
+| Piper + faber-medium | sim | 1 | não | neutro | RTF 0,10 | MIT/CC0 | variedade |
+| Piper + jeff-medium | sim | 1 | não | neutro | RTF 0,07 | MIT | suspense/mistério (lento: +20% duração) |
+| Piper + edresson-low | sim | 1 | não | — | — | MIT | **rejeitado**: nasal corrompida + arrastado |
+| F5-TTS pt-br | sim | clonagem | sim | — | GPU | CC-BY-NC | **rejeitado**: sem uso comercial |
+| XTTS-v2 | sim | clonagem | sim | — | GPU | CPML | **rejeitado**: sem uso comercial |
+| Bark | sim | várias | não | — | RTF 10–20x | MIT | **rejeitado**: 60s = 10–20min em CPU |
+| Kokoro-82M | não verificado | — | — | — | — | Apache-2.0 | pendente de voz pt-BR |
+
+Lacunas honestas: **sem voz feminina aberta** (não existe nos catálogos Piper;
+edge-tts tem, mas é externo sem SLA) e **sem sotaque regional** (nenhum modelo
+aberto reproduz; variedade = troca de locutor). Estilos (`documental`,
+`suspense`, `misterio`, `noticia`...) são interpretação sobre os 3 timbres
+(velocidade/pausa/ruído), com `voice-list` mostrando tudo. Marcação no texto:
+`[PAUSA CURTA/MEDIA/LONGA]`, `*enfase*` (micro-pausa — o Piper não tem SSML).
+
 ## Marcos
 
 | | Marco | Estado |

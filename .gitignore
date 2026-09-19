@@ -17,6 +17,7 @@ config.local.toml
 storage/
 data/*.db
 data/*.db-journal
+data/voices/
 *.mp4
 *.mp3
 *.srt
