@@ -14,12 +14,13 @@ TERMOS_SHORT = ["neural network nodes", "data stream tunnel"]
 
 
 def resposta_short(total: int = 40) -> str:
-    hook = "Um modelo gigante cabe no seu bolso?"
+    hook = "Um modelo de 27 bilhões cabe em cinco vírgula nove gigabytes?"
     closing = "Gigante no bolso: sera que cabe?"
-    fixos = len((hook + " " + closing).split())
+    sujeito = "O Bonsai 27B prova. "
+    fixos = len((hook + " " + sujeito + closing).split())
     return json.dumps({
         "hook": hook,
-        "body": " ".join(["detalhe"] * max(total - fixos, 1)),
+        "body": sujeito + " ".join(["detalhe"] * max(total - fixos, 1)),
         "closing": closing,
         "search_terms": TERMOS_SHORT,
         "used_facts": [0],

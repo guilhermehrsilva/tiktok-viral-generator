@@ -41,6 +41,7 @@ from agent.models import (
 )
 from agent.ports.llm import LLM, Completion, LLMError, Usage, parse_json_object
 from agent.research.grounding import missing_numbers
+from agent.research.subject import missing_subject
 from agent.writer.humanize import humanize as humanize_narration
 from agent.writer.visuals import brief as visual_brief
 from agent.writer.visuals import suggest_pillar, validate_terms
@@ -324,6 +325,14 @@ def _violacoes_mecanicas(script: Script, dossier: Dossier, fora: list[int],
 
     problemas.extend(validate_terms(script.search_terms))
 
+    sem_sujeito = missing_subject(script.narration, dossier.topic)
+    if sem_sujeito:
+        problemas.append(
+            "o roteiro fala de 'um modelo' sem nomear: cite "
+            + ", ".join(f"{t!r}" for t in sem_sujeito) + " (nome e criador, "
+            "conforme o dossie -- nunca invente). Sem nome nao ha busca nem "
+            "credibilidade.")
+
     falha_gancho = check_hook(script.hook)
     if falha_gancho is not None:
         problemas.append(falha_gancho)
@@ -454,7 +463,9 @@ def build_prompt(dossier: Dossier, correcoes: list[str] | None = None,
         "informacao e nao responde-la -- e o que decide se a pessoa continua "
         "assistindo. Ate 12 palavras (regra da marca). Nada de 'hoje eu vou "
         "falar sobre'.\n"
-        "- body: o desenvolvimento. Todo dado vem de um fato do dossie.\n"
+        "- body: o desenvolvimento. Todo dado vem de um fato do dossie. Nomeie "
+        "o assunto no hook ou na primeira frase do body (nome + quem construiu, "
+        "SE o dossie disser).\n"
         + fechamento +
         f"- search_terms: de {tmin} a {tmax} termos de busca de video de banco "
         "de imagens, EM INGLES, na ordem cronologica da narracao -- o material "

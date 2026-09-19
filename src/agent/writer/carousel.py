@@ -28,6 +28,7 @@ from agent.models import (
 )
 from agent.ports.llm import LLM, Completion, LLMError, Usage, parse_json_object
 from agent.research.grounding import missing_numbers
+from agent.research.subject import missing_subject
 from agent.writer.humanize import scan as scan_tells
 from agent.writer.visuals import brief as visual_brief
 from agent.writer.visuals import suggest_pillar, validate_terms
@@ -189,8 +190,14 @@ def _violacoes(carrossel: Carousel, dossier: Dossier, fora: list[int]) -> list[s
         problemas.append("used_facts vazio: carrossel tambem ancora em fonte.")
     problemas.extend(
         "visual: " + v for v in validate_terms([s.visual for s in carrossel.slides]))
-    fontes = "\n".join(f"{f.claim}\n{f.quote}" for f in dossier.facts)
     texto = "\n".join(f"{s.headline} {s.text}" for s in carrossel.slides)
+    fontes = "\n".join(f"{f.claim}\n{f.quote}" for f in dossier.facts)
+    sem_sujeito = missing_subject(texto, dossier.topic, minimum=1)
+    if sem_sujeito:
+        problemas.append(
+            "carrossel sem sujeito: nenhum slide nomeia "
+            + ", ".join(f"{t!r}" for t in sem_sujeito) + ". Quem assiste "
+            "precisa saber sobre O QUE sao os 5 slides.")
     # Contagem estrutural (o "5" da promessa) nao e afirmacao factual: sao os
     # proprios slides, verificados acima pela ordem 1-5. So numero acima disso
     # precisa existir no dossie.
@@ -226,6 +233,8 @@ def build_prompt(dossier: Dossier, correcoes: list[str] | None = None) -> str:
         "- caption: uma linha com a palavra-chave + UMA pergunta.\n"
         "- visual: tag COPIADA da lista de ESTETICA, um pilar so.\n"
         "- used_facts: indices do dossie.\n"
+        "- Nomeie o assunto (nome + quem construiu, SE o dossie disser) ja no "
+        "slide 1 ou 2: slide anonimo nao tem busca nem credibilidade.\n"
         "- UM dado numerico por linha: '143 tokens/s na RTX 5090' quebra a "
         "regra da marca (dois numeros numa frase) -- ponha '143 tokens por "
         "segundo' numa linha e o nome da placa na outra.\n",

@@ -68,8 +68,9 @@ def resposta(
     closing: str = FECHAMENTO,
 ) -> str:
     """Resposta do modelo no formato do schema, com contagem de palavras exata."""
-    fixos = len((hook + " " + closing + " " + extra).split())
-    corpo = " ".join(["detalhe"] * max(total - fixos, 1))
+    sujeito = "O Bonsai 27B e um modelo. "
+    fixos = len((hook + " " + sujeito + closing + " " + extra).split())
+    corpo = sujeito + " ".join(["detalhe"] * max(total - fixos, 1))
     return json.dumps({
         "hook": hook,
         "body": (extra + " " + corpo).strip(),

@@ -72,8 +72,29 @@ def _quebrar(draw: ImageDraw.ImageDraw, texto: str, fonte, largura: int) -> list
     return linhas
 
 
+def _fundo(foto: Path | None, fundo: tuple[int, int, int]) -> Image.Image:
+    """Foto em 9:16 escurecida, ou o fundo solido da marca."""
+    if foto is not None:
+        try:
+            img = Image.open(foto).convert("RGB")
+            img = img.resize((W, H))
+            escura = Image.new("RGB", (W, H), (0, 0, 0))
+            img = Image.blend(img, escura, 0.52)
+            # Degrade para o fundo na base: o texto assenta no escuro.
+            base = Image.new("RGB", (W, H), fundo)
+            mask = Image.new("L", (1, H))
+            for y in range(H):
+                t = max(0.0, (y - H * 0.45) / (H * 0.55))
+                mask.putpixel((0, y), int(255 * t * t))
+            mask = mask.resize((W, H))
+            return Image.composite(base, img, mask)
+        except (OSError, ValueError):
+            pass
+    return Image.new("RGB", (W, H), fundo)
+
+
 def render_slide(carrossel: Carousel, n: int, out: Path,
-                 pillar: str = "news") -> Path:
+                 pillar: str = "news", photo: Path | None = None) -> Path:
     """Um slide em PNG, no acento do pilar de conteudo."""
     brand = load_brand()
     slide = next(s for s in carrossel.slides if s.n == n)
@@ -83,8 +104,8 @@ def render_slide(carrossel: Carousel, n: int, out: Path,
     acento = _hex(brand.accent_for(pillar))
     tag = brand.pillars[pillar].tag if pillar in brand.pillars else ""
 
-    img = Image.new("RGB", (W, H), fundo)
-    draw = ImageDraw.Draw(img)
+    img = _fundo(photo, fundo)
+    draw = ImageDraw.Draw(img, "RGBA")
     for i in range(H):
         t = i / H
         draw.line([(0, i), (26, i)],
@@ -118,11 +139,14 @@ def render_slide(carrossel: Carousel, n: int, out: Path,
 
 
 def render_carousel(carrossel: Carousel, out_dir: Path | str,
-                    pillar: str = "news") -> list[Path]:
+                    pillar: str = "news",
+                    photos: dict[int, Path | None] | None = None) -> list[Path]:
     """Os 5 slides + caption.txt (gancho + contexto + hashtags da marca)."""
     brand = load_brand()
     destino = Path(out_dir)
-    slides = [render_slide(carrossel, s.n, destino / f"slide-{s.n}.png", pillar)
+    fotos = photos or {}
+    slides = [render_slide(carrossel, s.n, destino / f"slide-{s.n}.png", pillar,
+                           fotos.get(s.n))
               for s in carrossel.slides]
     legenda = f"{carrossel.caption}\n\n{' '.join(brand.hashtags)}\n"
     (destino / "caption.txt").write_text(legenda, encoding="utf-8")

@@ -190,6 +190,15 @@ paleta com 1 acento por pilar de conteúdo, Space Grotesk/Plex Mono,
 Divergência assumida: guia mira 20–45s, monetização exige ≥60s — long mantém
 voz/regras da marca na duração do Rewards.
 
+Fatia 6 (19/09/2026): RAG de sujeito (`research/subject.py` — roteiro que não
+nomeia reprova citando o que falta; pesquisador prefere fato com criador) e
+fotos nos slides (`render/photos.py`: Pexels pela tag do pilar, cache,
+overlay escuro; categoria auto pelo pilar de conteúdo). Armadilhas pagas:
+Pexels barra UA do urllib (403) na busca E no download; `fetch` sem mkdir
+engole o erro; chave no CLI vem de `AGENT_PEXELS_API_KEY` (Settings), não de
+`os.environ`. Groq-long `json_validate_failed` recorrente + 429 geral no fim
+do dia: rodada2 saiu com short novo, long/slides reaproveitados da rodada1.
+
 ---
 
 ## Regras ao mexer aqui

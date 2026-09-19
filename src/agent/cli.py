@@ -1145,6 +1145,8 @@ def carousel_render(
                                  help="pasta dos slides; padrao: output/carrossel-<ts>"),
     pillar: str = typer.Option("", "--pillar",
                                help="news|fato|analise|tutorial|futuro|vs; vazio sugere pelo tema"),
+    fotos: bool = typer.Option(False, "--fotos/--sem-fotos",
+                               help="fundo com foto Pexels pela tag do slide"),
 ) -> None:
     """Renderiza os 5 slides 1080x1920 do carrossel + caption.txt, local."""
     from datetime import datetime
@@ -1152,6 +1154,7 @@ def carousel_render(
     from agent.brand.brand import suggest_content_pillar
     from agent.models import Carousel as CarouselModel
     from agent.render.carousel import render_carousel
+    from agent.render.photos import fetch as fetch_photo
 
     try:
         modelo = CarouselModel.model_validate_json(carousel.read_text(encoding="utf-8"))
@@ -1163,7 +1166,15 @@ def carousel_render(
     destino = out_dir or settings.output_dir / (
         f"carrossel-{datetime.now().strftime('%Y%m%d-%H%M%S')}")
     typer.echo(f"pilar     : {pilar}")
-    slides = render_carousel(modelo, destino, pilar)
+    fotos_map: dict[int, Path | None] = {}
+    if fotos:
+        cache = settings.output_dir / "fotos-cache"
+        for s in modelo.slides:
+            caminho = fetch_photo(s.visual, cache)
+            fotos_map[s.n] = caminho
+            typer.echo(f"  slide {s.n}: {s.visual} -> "
+                       + (caminho.name if caminho else "sem foto (layout puro)"))
+    slides = render_carousel(modelo, destino, pilar, fotos_map or None)
     for s in slides:
         typer.echo(f"  {s} ({s.stat().st_size} bytes)")
     typer.echo(f"legenda em {destino / 'caption.txt'}")

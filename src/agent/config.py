@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     # legenda, montagem) sem depender de chave de API nem de rede.
     video_source: str = "pexels"
     local_materials: list[Path] = []
+    # Chave do Pexels com prefixo do projeto (o .env herdado do MPT usa
+    # PEXELS_API_KEY sem prefixo; os dois valem, o com prefixo primeiro).
+    pexels_api_key: str = ""
 
     # --- producao ---
     voice_name: str = VOICES_PTBR[0]

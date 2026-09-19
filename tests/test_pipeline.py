@@ -39,9 +39,10 @@ def dossie() -> Dossier:
 
 def roteiro_json(total: int = 187) -> str:
     fixos = len((HOOK + " " + FECHAMENTO).split())
+    corpo = "O Bonsai 27B e um modelo. " + " ".join(["detalhe"] * max(total - fixos - 6, 1))
     return json.dumps({
         "hook": HOOK,
-        "body": " ".join(["detalhe"] * max(total - fixos, 1)),
+        "body": corpo,
         "closing": FECHAMENTO,
         "search_terms": ["neural network nodes", "ai deep learning loop",
                          "data stream tunnel", "abstract digital plexus"],
