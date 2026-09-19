@@ -7,8 +7,9 @@ A primeira e **julgamento**: hook que abre lacuna, ponto de vista proprio,
 portugues falado. Isso e trabalho do juiz (fatia 3), com rubrica, e nao da para
 decidir por regra.
 
-A segunda e **mecanica**: contar palavra, conferir se o termo de busca esta em
-ASCII, conferir se o indice de fato existe no dossie. Isso nao precisa de juiz
+A segunda e **mecanica**: contar palavra, conferir se o termo de busca esta
+em ASCII e saiu do vocabulario visual do canal (um pilar so), conferir se o
+indice de fato existe no dossie. Isso nao precisa de juiz
 nenhum, e gastar uma rodada de revisao do juiz com erro de contagem seria
 desperdicio de cota. Por isso o roteirista tem seu proprio laco de correcao, com
 o defeito medido devolvido ao modelo em texto, e so entrega ao juiz um roteiro
@@ -38,6 +39,8 @@ from agent.models import (
 )
 from agent.ports.llm import LLM, Completion, LLMError, Usage, parse_json_object
 from agent.research.grounding import missing_numbers
+from agent.writer.visuals import brief as visual_brief
+from agent.writer.visuals import suggest_pillar, validate_terms
 
 # Faixa de palavras que corresponde a faixa de duracao exigida.
 MIN_PALAVRAS = int(MIN_DURATION_S * WORDS_PER_SECOND)
@@ -266,6 +269,8 @@ def _violacoes_mecanicas(script: Script, dossier: Dossier, fora: list[int]) -> l
             "Use so os numeros dos fatos, sem converter unidade e sem arredondar."
         )
 
+    problemas.extend(validate_terms(script.search_terms))
+
     return problemas
 
 
@@ -366,9 +371,10 @@ def build_prompt(dossier: Dossier, correcoes: list[str] | None = None) -> str:
         "Encerre com uma chamada que nao seja 'siga para mais'.\n"
         "- search_terms: de 4 a 8 termos de busca de video de banco de imagens, "
         "EM INGLES, na ordem cronologica da narracao -- o material do primeiro "
-        "termo abre o video. Cada termo e uma cena filmavel e concreta "
-        "('server rack blue lights'), nunca um conceito abstrato ('innovation').\n"
+        "termo abre o video. Cada termo e COPIADO da lista de ESTETICA, nunca "
+        "um conceito abstrato ('innovation').\n"
         "- used_facts: os indices dos fatos do dossie em que o roteiro se apoia.\n",
+        visual_brief(suggest_pillar(dossier.topic)),
         "REGRAS\n"
         f"- A narracao inteira (hook + body + closing) precisa ter entre "
         f"{MIN_PALAVRAS} e {MAX_PALAVRAS} palavras, ou seja cerca de {alvo}. "

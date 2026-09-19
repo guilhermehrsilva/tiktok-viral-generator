@@ -154,7 +154,10 @@ medido, e não upgrade assumido.
 Fatia 1 (19/09/2026): `agent eval` agrega offline roteiros e pareceres gravados
 (escritor x juiz + matriz pareada no mesmo roteiro, parecer interrompido fora da
 média); `agent metrics-record` grava a série por `publish_id` com `script_id`
-opcional fechando o loop. Falta: conjunto fixo com 2–3 temas (hoje só Bonsai 2)
+opcional fechando o loop. Fatia 2 (19/09/2026): vocabulário visual do canal dark
+(`writer/visuals.py`, 4 pilares A–D, tags fixas em inglês) com portão mecânico
+no roteirista — validado com o gemini real (5 termos, pilar C, 1ª tentativa).
+Falta: conjunto fixo com 2–3 temas (hoje só Bonsai 2)
 e as primeiras métricas reais do app.
 
 ---

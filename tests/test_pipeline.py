@@ -43,7 +43,8 @@ def roteiro_json(total: int = 187) -> str:
         "hook": HOOK,
         "body": " ".join(["detalhe"] * max(total - fixos, 1)),
         "closing": FECHAMENTO,
-        "search_terms": ["memory chip macro", "server rack lights", "binary code screen"],
+        "search_terms": ["neural network nodes", "ai deep learning loop",
+                         "data stream tunnel"],
         "used_facts": [0, 1],
     }, ensure_ascii=False)
 

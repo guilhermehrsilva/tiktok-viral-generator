@@ -34,10 +34,10 @@ HOOK = ("Um modelo de vinte e sete bilhoes de parametros agora cabe em menos esp
 FECHAMENTO = ("Numero sem base de comparacao nao e medicao, e marketing. Leve essa "
               "pergunta para o proximo anuncio que voce ler.")
 TERMOS = [
-    "computer memory chip macro",
-    "binary code on screen",
-    "server rack blue lights",
-    "gaming pc graphics card rgb",
+    "neural network nodes",
+    "ai deep learning loop",
+    "data stream tunnel",
+    "abstract digital plexus",
 ]
 
 
