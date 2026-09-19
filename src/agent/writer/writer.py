@@ -439,8 +439,10 @@ def build_prompt(dossier: Dossier, correcoes: list[str] | None = None,
         "pergunta que elas deixam sem resposta, e devolve isso ao espectador. "
         "Encerre com uma chamada que nao seja 'siga para mais'.\n"
         if mode == "long" else
-        "- closing: UMA frase que reconecta com a pergunta do hook, para o video "
-        "recomecar sozinho no replay. Sem 'siga para mais'.\n"
+        "- closing: UMA frase que reconecta com a pergunta do hook E aponta a "
+        "implicacao que a fonte nao desenvolve (ex.: 'Se sao dois orgaos, qual "
+        "deles decide por voce?'). E o ponto de vista do video -- sem ele o "
+        "roteiro e resumo. Sem 'siga para mais'.\n"
     )
 
     duracao_txt = (

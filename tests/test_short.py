@@ -50,7 +50,8 @@ class TestShort:
 
     def test_prompt_pede_loop_e_faixa(self):
         texto = build_prompt(dossie(), None, "short")
-        assert "replay" in texto and "30" in texto and "50" in texto
+        assert "reconecta" in texto and "30" in texto and "50" in texto
+        assert "implicacao" in texto
 
     def test_modo_desconhecido_falha_cedo(self):
         import pytest

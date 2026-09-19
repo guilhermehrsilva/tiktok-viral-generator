@@ -85,6 +85,9 @@ class TestPortoes:
         assert check_numbers("O Bonsai 27B roda na RTX 5090.") == []
         assert check_numbers("Escala FP16 com 1.76 bits.") == []
 
+    def test_intervalo_conta_como_um(self):
+        assert check_numbers("Suporta de 25 a 300 contas por chave.") == []
+
     def test_dois_numeros_pedem_duas_frases(self):
         texto = "Ocupa 5,9 GB e retem 98,2% do desempenho."
         (falha,) = check_numbers(texto)

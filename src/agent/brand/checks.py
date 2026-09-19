@@ -12,6 +12,13 @@ import re
 HOOK_MAX_WORDS = 12
 
 _DIGITO = re.compile(r"\d+(?:[.,]\d+)?")
+_INTERVALO = re.compile(r"\d+(?:[.,]\d+)?\s*(?:a|até|ate|-)\s*\d+(?:[.,]\d+)?")
+
+
+def _sem_intervalos(text: str) -> str:
+    """'25 a 300' e uma quantidade so: mantem o primeiro numero."""
+    return _INTERVALO.sub(lambda m: re.findall(r"\d+(?:[.,]\d+)?", m.group(0))[0],
+                          text)
 _NOME_COLADO = re.compile(r"\b(?=[\w.,]*[A-Za-zÀ-ÿ])[\w.,]*\d[\w.,]*\b")
 _NOME_SIGLA_NUMERO = re.compile(r"[A-ZÀ-Þ]{2,}\s+\d+(?:[.,]\d+)?")
 
@@ -47,7 +54,8 @@ def check_numbers(text: str, ignorar_ate: int = 0) -> list[str]:
     ancoragem). Na narracao de video vale 0: la todo numero e afirmacao.
     """
     problemas = []
-    for sent in [s.strip() for s in _SENTENCA.split(text) if s.strip()]:
+    for sent in [s.strip() for s in _SENTENCA.split(_sem_intervalos(text))
+                 if s.strip()]:
         nums = [n for n in _DIGITO.findall(_sem_nomes(sent))
                 if not (n.isdigit() and int(n) <= ignorar_ate)]
         if len(nums) > 1:

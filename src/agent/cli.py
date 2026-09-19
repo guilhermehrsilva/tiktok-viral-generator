@@ -77,11 +77,15 @@ def render(
             Path(script_path).read_text(encoding="utf-8"), encoding="utf-8")
     typer.echo(f"pacote    : {out_dir}")
 
-    # Aceite do M0, medido e nao presumido.
+    # Aceite medido, nao presumido. A faixa depende do formato: short nao
+    # e elegivel ao Rewards, e cobrar 60-90s dele reprovaria todo curto.
+    formato = script.format or "long"
+    faixa = (MIN_DURATION_S, MAX_DURATION_S) if formato == "long" else (10, 30)
+    na_faixa = (result.duration_s is not None
+                and faixa[0] <= result.duration_s <= faixa[1])
     checks = [
         ("9:16 em 1080x1920", result.is_portrait_1080x1920),
-        (f"duracao entre {MIN_DURATION_S}s e {MAX_DURATION_S}s",
-         result.duration_in_monetizable_range),
+        (f"duracao entre {faixa[0]}s e {faixa[1]}s ({formato})", na_faixa),
         ("trilha de audio presente", result.has_audio),
     ]
     typer.echo("")

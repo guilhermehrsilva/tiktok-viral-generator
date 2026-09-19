@@ -502,7 +502,7 @@ class SignalStore:
 
     def list_reviews(self, topic: str | None = None) -> list[dict]:
         """Linhas de parecer para o eval, com o JSON para agregar por criterio."""
-        sql = ("SELECT id, topic, script_id, model, provider, review_json,"
+        sql = ("SELECT id, topic, script_id, model, provider, approved, review_json,"
                " input_tokens, output_tokens, latency_s FROM reviews")
         params: tuple = ()
         if topic:
