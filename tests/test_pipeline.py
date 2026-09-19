@@ -44,7 +44,7 @@ def roteiro_json(total: int = 187) -> str:
         "body": " ".join(["detalhe"] * max(total - fixos, 1)),
         "closing": FECHAMENTO,
         "search_terms": ["neural network nodes", "ai deep learning loop",
-                         "data stream tunnel"],
+                         "data stream tunnel", "abstract digital plexus"],
         "used_facts": [0, 1],
     }, ensure_ascii=False)
 

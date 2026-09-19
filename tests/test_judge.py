@@ -112,7 +112,7 @@ class TestCriteriosMedidos:
         report, _ = julgar(parecer(), script=curto)
         nota = report.review.by_criterion[Criterion.duracao]
         assert nota.score == 0
-        assert "fora da faixa de monetizacao" in nota.reason
+        assert "fora da faixa" in nota.reason
         assert not report.approved
 
     def test_politica_reusa_o_filtro_do_curador(self):

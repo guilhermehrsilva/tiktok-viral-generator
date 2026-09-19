@@ -277,16 +277,17 @@ def _nao_avaliados(bloqueio: list[CriterionScore]) -> list[CriterionScore]:
 def _notas_medidas(script: Script) -> list[CriterionScore]:
     """Duracao e politica: medida, nunca leitura."""
     duracao = script.estimated_duration_s
-    na_faixa = MIN_DURATION_S <= duracao <= MAX_DURATION_S
-    # Nao existe meio ponto para duracao: ou o video e elegivel ao Creator
-    # Rewards, ou nao e.
+    faixa = (MIN_DURATION_S, MAX_DURATION_S) if script.format != "short" else (10, 20)
+    na_faixa = faixa[0] <= duracao <= faixa[1]
+    # Nao existe meio ponto para duracao: ou o video esta na faixa do formato,
+    # ou nao e.
     nota_duracao = CriterionScore(
         criterion=Criterion.duracao,
         score=2 if na_faixa else 0,
         reason=(
             f"{script.word_count} palavras, ~{duracao:.0f}s estimados "
-            f"(faixa exigida: {MIN_DURATION_S}-{MAX_DURATION_S}s)"
-            + ("" if na_faixa else "; fora da faixa de monetizacao")
+            f"(faixa exigida: {faixa[0]}-{faixa[1]}s)"
+            + ("" if na_faixa else "; fora da faixa do formato")
         ),
         measured=True,
     )
@@ -315,6 +316,12 @@ def build_prompt(script: Script, dossier: Dossier) -> str:
         f"[{i}] {f.claim} (fonte: {f.source_name})" for i, f in enumerate(dossier.facts)
     )
     rubrica = "\n".join(f"- {c.value}: {DESCRICOES[c]}" for c in JULGADOS)
+    loop = (
+        "\nFECHAMENTO EM LOOP: video curto vive de replay automatico; o "
+        "criterio cta vale 2 quando o fechamento reconecta com a pergunta do "
+        "hook, e 0 quando e CTA generico."
+        if script.format == "short" else ""
+    )
     return (
         f"TEMA: {script.topic}\n\n"
         f"DOSSIE DISPONIVEL AO ROTEIRISTA:\n{fatos}\n\n"
@@ -323,7 +330,7 @@ def build_prompt(script: Script, dossier: Dossier) -> str:
         f"CORPO: {script.body}\n\n"
         f"FECHAMENTO: {script.closing}\n\n"
         "RUBRICA (nota de 0 a 2 em cada critério)\n"
-        f"{rubrica}\n\n"
+        f"{rubrica}{loop}\n\n"
         "Devolva um objeto json com um campo por critério, cada um com 'reason' "
         "(uma frase dizendo o que precisa mudar, em portugues) e 'score' (0, 1 ou 2). "
         "Escreva a razao antes da nota. Nao avalie duracao nem politica: "

@@ -14,9 +14,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from agent.judge.carousel import CarouselReviewReport, judge_carousel
 from agent.judge.judge import Judge, ReviewReport
-from agent.models import Dossier, Review, Script
-from agent.ports.llm import LLMError, Usage
+from agent.models import Carousel, CarouselReview, Dossier, Review, Script
+from agent.ports.llm import LLM, LLMError, Usage
+from agent.writer.carousel import CarouselReport, write_carousel
 from agent.writer.writer import Screenwriter, WriteReport
 
 MAX_REVISOES = 2
@@ -105,6 +107,7 @@ def produce(
     writer: Screenwriter,
     judge: Judge,
     max_revisions: int = MAX_REVISOES,
+    mode: str = "long",
 ) -> ProductionReport:
     report = ProductionReport(topic=dossier.topic)
     notas: list[str] = []
@@ -114,7 +117,7 @@ def produce(
         report.rounds.append(rodada)
 
         try:
-            rodada.write = writer.write(dossier, notes=notas or None)
+            rodada.write = writer.write(dossier, mode=mode, notes=notas or None)
         except LLMError as exc:
             # Cota ou instabilidade. O laco termina aqui, mas registrando o
             # estagio e mantendo o custo ja gasto no relatorio -- sob restricao de
@@ -140,4 +143,97 @@ def produce(
 
         notas = rodada.review.review.revision_notes if rodada.review.review else []
 
+    return report
+
+
+@dataclass
+class CarouselRound:
+    notes_in: list[str] = field(default_factory=list)
+    write: CarouselReport | None = None
+    review: CarouselReviewReport | None = None
+    failure: str = ""
+
+    @property
+    def approved(self) -> bool:
+        return self.review is not None and self.review.approved
+
+
+@dataclass
+class CarouselProductionReport:
+    topic: str
+    rounds: list[CarouselRound] = field(default_factory=list)
+
+    @property
+    def approved(self) -> bool:
+        return any(r.approved for r in self.rounds)
+
+    @property
+    def failure(self) -> str:
+        return next((r.failure for r in reversed(self.rounds) if r.failure), "")
+
+    @property
+    def carousel(self) -> Carousel | None:
+        for r in self.rounds:
+            if r.approved and r.write is not None and r.write.carousel is not None:
+                return r.write.carousel
+        for r in reversed(self.rounds):
+            if (r.write is not None and r.write.carousel is not None):
+                return r.write.carousel
+        return None
+
+    @property
+    def review(self) -> CarouselReview | None:
+        for r in self.rounds:
+            if r.approved and r.review is not None:
+                return r.review.review
+        for r in reversed(self.rounds):
+            if r.review is not None:
+                return r.review.review
+        return None
+
+    @property
+    def usage(self) -> Usage:
+        total = Usage()
+        for r in self.rounds:
+            if r.write is not None:
+                total = total + r.write.usage
+            if r.review is not None:
+                total = total + r.review.usage
+        return total
+
+    @property
+    def latency_s(self) -> float:
+        return round(sum(
+            (r.write.latency_s if r.write is not None else 0.0)
+            + (r.review.latency_s if r.review is not None else 0.0)
+            for r in self.rounds), 3)
+
+
+def produce_carousel(
+    dossier: Dossier,
+    llm: LLM,
+    max_revisions: int = MAX_REVISOES,
+) -> CarouselProductionReport:
+    """Escreve, julga e revisa o carrossel ate passar (corte 6/8)."""
+    report = CarouselProductionReport(topic=dossier.topic)
+    notas: list[str] = []
+    for _ in range(max_revisions + 1):
+        rodada = CarouselRound(notes_in=list(notas))
+        report.rounds.append(rodada)
+        try:
+            rodada.write = write_carousel(dossier, llm, notes=notas or None)
+        except LLMError as exc:
+            rodada.failure = f"roteirista: {type(exc).__name__}: {exc}"
+            return report
+        if rodada.write.carousel is None:
+            return report
+        try:
+            rodada.review = judge_carousel(rodada.write.carousel, dossier, llm)
+        except LLMError as exc:
+            rodada.failure = f"juiz: {type(exc).__name__}: {exc}"
+            return report
+        if rodada.review.approved:
+            return report
+        notas = (rodada.review.review.revision_notes
+                 if rodada.review.review is not None else [])
     return report

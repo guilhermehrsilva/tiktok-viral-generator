@@ -22,7 +22,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from agent.models import Decision, Dossier, Review, Script, Signal
+from agent.models import Carousel, CarouselReview, Decision, Dossier, Review, Script, Signal
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS signals (
@@ -155,6 +155,27 @@ CREATE TABLE IF NOT EXISTS metrics (
     FOREIGN KEY (script_id) REFERENCES scripts(id)
 );
 CREATE INDEX IF NOT EXISTS idx_metrics_publish ON metrics(publish_id, collected_at DESC);
+
+-- Carrossel: roteiro de 5 slides + parecer embutido. Parecer proprio (e nao
+-- linha em `reviews`) porque a rubrica do carrossel tem 4 critérios, e
+-- `reviews.review_json` valida como Review de 7. `format` em scripts existe
+-- pelo mesmo motivo: o eval agrupa por formato sem desserializar JSON.
+CREATE TABLE IF NOT EXISTS carousels (
+    id            INTEGER PRIMARY KEY,
+    topic         TEXT    NOT NULL,
+    model         TEXT    NOT NULL,
+    provider      TEXT    NOT NULL,
+    approved      INTEGER NOT NULL,
+    carousel_json TEXT    NOT NULL,
+    review_json   TEXT,
+    attempts_json TEXT    NOT NULL,
+    input_tokens  INTEGER NOT NULL,
+    output_tokens INTEGER NOT NULL,
+    latency_s     REAL    NOT NULL,
+    created_at    TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_carousels_topic_created
+    ON carousels(topic, created_at DESC);
 """
 
 
@@ -164,6 +185,24 @@ class SignalStore:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         with self._conn() as conn:
             conn.executescript(SCHEMA)
+            self._migrate(conn)
+
+    @staticmethod
+    def _migrate(conn: sqlite3.Connection) -> None:
+        """Colunas de fatias novas em bancos criados por fatias velhas.
+
+        CREATE TABLE IF NOT EXISTS nao adiciona coluna em tabela que ja
+        existe -- sem isso, o banco real da maquina (criado no M3) rejeita
+        INSERT com `format` e o teste hermetico nunca acusaria, porque tmp
+        sempre nasce do SCHEMA novo.
+        """
+        def cols(tabela: str) -> set[str]:
+            return {r[1] for r in conn.execute(f"PRAGMA table_info({tabela})")}
+        if "format" not in cols("scripts"):
+            conn.execute("ALTER TABLE scripts ADD COLUMN format TEXT NOT NULL DEFAULT 'long'")
+        for col in ("saves", "comments", "shares"):
+            if col not in cols("metrics"):
+                conn.execute(f"ALTER TABLE metrics ADD COLUMN {col} INTEGER")
 
     @contextmanager
     def _conn(self) -> Iterator[sqlite3.Connection]:
@@ -330,13 +369,15 @@ class SignalStore:
             cur = conn.execute(
                 "INSERT INTO scripts (topic, model, provider, dossier_id, word_count,"
                 " attempts, input_tokens, output_tokens, latency_s, script_json,"
-                " attempts_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " attempts_json, created_at, format)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     script.topic, model, provider, dossier_id, script.word_count,
                     len(attempts), usage[0], usage[1], latency_s,
                     script.model_dump_json(),
                     json.dumps(attempts, ensure_ascii=False),
                     datetime.now(UTC).isoformat(),
+                    script.format,
                 ),
             )
         return int(cur.lastrowid or 0)
@@ -450,7 +491,7 @@ class SignalStore:
     def list_scripts(self, topic: str | None = None) -> list[dict]:
         """Linhas de roteiro para o eval, com custo. Sem parsing aqui."""
         sql = ("SELECT id, topic, model, provider, word_count, attempts,"
-               " input_tokens, output_tokens, latency_s FROM scripts")
+               " input_tokens, output_tokens, latency_s, format FROM scripts")
         params: tuple = ()
         if topic:
             sql += " WHERE topic = ?"
@@ -481,11 +522,16 @@ class SignalStore:
         script_id: int | None = None,
         avg_watch_s: float | None = None,
         completion_rate: float | None = None,
+        saves: int | None = None,
+        comments: int | None = None,
+        shares: int | None = None,
     ) -> int:
         """Grava uma coleta de metricas. Devolve o id da linha.
 
         Falha cedo em numero impossivel: views negativo, completion fora de
         0..1 ou watch negativo entram na serie e corrompem a curva sem aviso.
+        saves/comments/shares sao o placar do carrossel (e o desempate do
+        video): completion sozinho nao diz se o post gerou acao.
         """
         if not publish_id:
             raise ValueError("metrica sem publish_id")
@@ -495,12 +541,18 @@ class SignalStore:
             raise ValueError("tempo medio de exibicao negativo")
         if completion_rate is not None and not 0.0 <= completion_rate <= 1.0:
             raise ValueError("completion_rate fora de 0..1")
+        for nome, valor in (("saves", saves), ("comments", comments),
+                            ("shares", shares)):
+            if valor is not None and valor < 0:
+                raise ValueError(f"{nome} negativo")
         with self._conn() as conn:
             cur = conn.execute(
                 "INSERT INTO metrics (publish_id, script_id, views, avg_watch_s,"
-                " completion_rate, collected_at) VALUES (?, ?, ?, ?, ?, ?)",
+                " completion_rate, saves, comments, shares, collected_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     publish_id, script_id, views, avg_watch_s, completion_rate,
+                    saves, comments, shares,
                     datetime.now(UTC).isoformat(),
                 ),
             )
@@ -510,7 +562,8 @@ class SignalStore:
         with self._conn() as conn:
             row = conn.execute(
                 "SELECT publish_id, script_id, views, avg_watch_s,"
-                " completion_rate, collected_at FROM metrics"
+                " completion_rate, saves, comments, shares, collected_at"
+                " FROM metrics"
                 " WHERE publish_id = ? ORDER BY collected_at DESC, id DESC LIMIT 1",
                 (publish_id,),
             ).fetchone()
@@ -521,7 +574,8 @@ class SignalStore:
         with self._conn() as conn:
             rows = conn.execute(
                 "SELECT publish_id, script_id, views, avg_watch_s,"
-                " completion_rate, collected_at FROM metrics"
+                " completion_rate, saves, comments, shares, collected_at"
+                " FROM metrics"
                 " WHERE publish_id = ? ORDER BY collected_at, id",
                 (publish_id,),
             ).fetchall()
@@ -530,6 +584,79 @@ class SignalStore:
     def metric_count(self) -> int:
         with self._conn() as conn:
             return int(conn.execute("SELECT COUNT(*) AS n FROM metrics").fetchone()["n"])
+
+    # ------------------------------------------------------------------ carrosseis
+
+    def record_carousel(
+        self,
+        carousel: Carousel,
+        *,
+        model: str,
+        provider: str,
+        usage: tuple[int, int],
+        latency_s: float,
+        attempts: list[dict],
+        review: CarouselReview | None = None,
+    ) -> int:
+        """Grava carrossel com parecer embutido (rubrica propria, 4 critérios)."""
+        with self._conn() as conn:
+            cur = conn.execute(
+                "INSERT INTO carousels (topic, model, provider, approved,"
+                " carousel_json, review_json, attempts_json, input_tokens,"
+                " output_tokens, latency_s, created_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    carousel.topic, model, provider,
+                    int(review.approved) if review is not None else 0,
+                    carousel.model_dump_json(),
+                    review.model_dump_json() if review is not None else None,
+                    json.dumps(attempts, ensure_ascii=False),
+                    usage[0], usage[1], latency_s,
+                    datetime.now(UTC).isoformat(),
+                ),
+            )
+        return int(cur.lastrowid or 0)
+
+    def list_carousels(self, topic: str | None = None) -> list[dict]:
+        sql = ("SELECT id, topic, model, provider, approved, carousel_json,"
+               " review_json, input_tokens, output_tokens, latency_s"
+               " FROM carousels")
+        params: tuple = ()
+        if topic:
+            sql += " WHERE topic = ?"
+            params = (topic,)
+        sql += " ORDER BY created_at, id"
+        with self._conn() as conn:
+            return [dict(r) for r in conn.execute(sql, params).fetchall()]
+
+    def latest_carousel_id(self, topic: str | None = None) -> int | None:
+        sql = "SELECT id FROM carousels"
+        params: tuple = ()
+        if topic:
+            sql += " WHERE topic = ?"
+            params = (topic,)
+        sql += " ORDER BY created_at DESC, id DESC LIMIT 1"
+        with self._conn() as conn:
+            row = conn.execute(sql, params).fetchone()
+        return int(row["id"]) if row else None
+
+    def update_carousel_review(self, carousel_id: int, review: CarouselReview) -> None:
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE carousels SET review_json = ?, approved = ? WHERE id = ?",
+                (review.model_dump_json(), int(review.approved), carousel_id),
+            )
+
+    def latest_carousel(self, topic: str | None = None) -> Carousel | None:
+        sql = "SELECT carousel_json FROM carousels"
+        params: tuple = ()
+        if topic:
+            sql += " WHERE topic = ?"
+            params = (topic,)
+        sql += " ORDER BY created_at DESC, id DESC LIMIT 1"
+        with self._conn() as conn:
+            row = conn.execute(sql, params).fetchone()
+        return Carousel.model_validate_json(row["carousel_json"]) if row else None
 
 
 def _parse_iso(value: str) -> datetime:

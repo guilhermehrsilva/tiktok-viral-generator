@@ -39,12 +39,24 @@ from agent.models import (
 )
 from agent.ports.llm import LLM, Completion, LLMError, Usage, parse_json_object
 from agent.research.grounding import missing_numbers
+from agent.writer.humanize import humanize as humanize_narration
 from agent.writer.visuals import brief as visual_brief
 from agent.writer.visuals import suggest_pillar, validate_terms
 
 # Faixa de palavras que corresponde a faixa de duracao exigida.
 MIN_PALAVRAS = int(MIN_DURATION_S * WORDS_PER_SECOND)
 MAX_PALAVRAS = int(MAX_DURATION_S * WORDS_PER_SECOND)
+
+# short nao monetiza (15s << 60s): a funcao dele e alcance, nao receita.
+# ~40 palavras a 2,5/s; final em loop para o replay automatico.
+BANDS: dict[str, tuple[int, int]] = {
+    "long": (MIN_PALAVRAS, MAX_PALAVRAS),
+    "short": (30, 50),
+}
+TERMS_PER_MODE: dict[str, tuple[int, int]] = {
+    "long": (4, 8),
+    "short": (2, 4),
+}
 
 # "[0]", "[1, 2]": o indice do fato echoado dentro do texto. Medido na primeira
 # execucao real (18/09/2026): o modelo escreveu "...no seu projeto [0]." e
@@ -114,6 +126,12 @@ class WriteReport:
     attempts: list[Attempt] = field(default_factory=list)
     model: str = ""
     provider: str = ""
+    # Passada de humanizacao apos o aceite mecanico. Nao e tentativa: nao
+    # reprova, so melhora -- ou mantem o original com motivo.
+    humanized: bool = False
+    humanize_notes: list[str] = field(default_factory=list)
+    humanize_usage: Usage = field(default_factory=Usage)
+    humanize_latency_s: float = 0.0
     # Motivo de nem ter tentado. Diferente de tentativa reprovada: aqui nenhuma
     # chamada foi feita, e o custo e zero.
     refusal: str = ""
@@ -127,11 +145,12 @@ class WriteReport:
         total = Usage()
         for a in self.attempts:
             total = total + a.usage
-        return total
+        return total + self.humanize_usage
 
     @property
     def latency_s(self) -> float:
-        return round(sum(a.latency_s for a in self.attempts), 3)
+        return round(
+            sum(a.latency_s for a in self.attempts) + self.humanize_latency_s, 3)
 
     @property
     def violations(self) -> list[str]:
@@ -144,13 +163,16 @@ class Screenwriter:
         self._llm = llm
         self._max_attempts = max_attempts
 
-    def write(self, dossier: Dossier, notes: list[str] | None = None) -> WriteReport:
+    def write(self, dossier: Dossier, notes: list[str] | None = None,
+              mode: str = "long", polish: bool = True) -> WriteReport:
         """Escreve o roteiro. `notes` sao as notas de revisao do juiz.
 
         Elas entram no mesmo canal das violacoes mecanicas -- o modelo recebe uma
         lista de defeitos a corrigir e nao precisa saber qual deles foi contado e
         qual foi julgado.
         """
+        if mode not in BANDS:
+            raise ValueError(f"modo desconhecido: {mode!r}; use long ou short")
         report = WriteReport(
             topic=dossier.topic,
             model=getattr(self._llm, "model", ""),
@@ -169,7 +191,7 @@ class Screenwriter:
         for _ in range(self._max_attempts):
             try:
                 resposta = self._llm.complete(
-                    build_prompt(dossier, correcao),
+                    build_prompt(dossier, correcao, mode),
                     system=SISTEMA,
                     schema=SCHEMA_ROTEIRO,
                     temperature=0.6,
@@ -181,18 +203,38 @@ class Screenwriter:
                 # resposta e tratado em _avaliar, como violacao corrigivel.
                 raise
 
-            tentativa, script = self._avaliar(resposta, dossier)
+            tentativa, script = self._avaliar(resposta, dossier, mode)
             report.attempts.append(tentativa)
             if not tentativa.violations:
                 report.script = script
+                if polish and script is not None:
+                    self._polir(report, script, dossier, mode)
                 return report
             correcao = tentativa.violations
 
         return report
 
+    def _polir(self, report: WriteReport, script: Script,
+               dossier: Dossier, mode: str) -> None:
+        """Passada de humanizacao. Original intacto se a reescrita falhar."""
+        minimo, maximo = BANDS[mode]
+        rel = humanize_narration(
+            script.hook, script.body, script.closing, dossier,
+            self._llm, minimo, maximo)
+        report.humanize_usage = rel.usage
+        report.humanize_latency_s = rel.latency_s
+        report.humanize_notes = rel.notes
+        if rel.changed:
+            report.script = Script(
+                topic=script.topic, hook=rel.hook, body=rel.body,
+                closing=rel.closing, search_terms=script.search_terms,
+                facts=script.facts, format=script.format)
+            report.humanized = True
+
     # ------------------------------------------------------------------ avaliacao
 
-    def _avaliar(self, resposta: Completion, dossier: Dossier) -> tuple[Attempt, Script | None]:
+    def _avaliar(self, resposta: Completion, dossier: Dossier,
+                 mode: str = "long") -> tuple[Attempt, Script | None]:
         tentativa = Attempt(usage=resposta.usage, latency_s=resposta.latency_s)
         if resposta.truncated:
             tentativa.violations.append(
@@ -218,6 +260,7 @@ class Screenwriter:
                 closing=_texto(corpo.get("closing")),
                 search_terms=_termos(corpo.get("search_terms")),
                 facts=usados,
+                format=mode,
             )
         except ValidationError as exc:
             tentativa.violations.extend(_violacoes_de_contrato(exc))
@@ -225,13 +268,16 @@ class Screenwriter:
 
         tentativa.word_count = script.word_count
         tentativa.narration = script.narration
-        tentativa.violations.extend(_violacoes_mecanicas(script, dossier, fora))
+        tentativa.violations.extend(_violacoes_mecanicas(script, dossier, fora, mode))
         return tentativa, (script if not tentativa.violations else None)
 
 
-def _violacoes_mecanicas(script: Script, dossier: Dossier, fora: list[int]) -> list[str]:
+def _violacoes_mecanicas(script: Script, dossier: Dossier, fora: list[int],
+                         mode: str = "long") -> list[str]:
     """O que da para conferir sem julgamento. Texto vai de volta ao modelo."""
     problemas: list[str] = []
+    minimo, maximo = BANDS[mode]
+    tmin, tmax = TERMS_PER_MODE[mode]
 
     marcadores = _MARCADOR_DE_CITACAO.findall(script.narration)
     if marcadores:
@@ -241,13 +287,18 @@ def _violacoes_mecanicas(script: Script, dossier: Dossier, fora: list[int]) -> l
             "alta. O indice do fato vai APENAS no campo used_facts."
         )
 
-    if not (MIN_PALAVRAS <= script.word_count <= MAX_PALAVRAS):
-        alvo = (MIN_PALAVRAS + MAX_PALAVRAS) // 2
+    if not (minimo <= script.word_count <= maximo):
+        alvo = (minimo + maximo) // 2
         problemas.append(
             f"a narracao tem {script.word_count} palavras "
-            f"(~{script.estimated_duration_s:.0f}s) e precisa ter entre {MIN_PALAVRAS} e "
-            f"{MAX_PALAVRAS} (entre {MIN_DURATION_S}s e {MAX_DURATION_S}s). "
-            f"Reescreva com cerca de {alvo} palavras."
+            f"(~{script.estimated_duration_s:.0f}s) e precisa ter entre {minimo} e "
+            f"{maximo}. Reescreva com cerca de {alvo} palavras."
+        )
+
+    if not (tmin <= len(script.search_terms) <= tmax):
+        problemas.append(
+            f"search_terms tem {len(script.search_terms)} termos e o modo {mode} "
+            f"pede entre {tmin} e {tmax}, em ordem cronologica."
         )
 
     if fora:
@@ -346,14 +397,33 @@ def _violacoes_de_contrato(exc: ValidationError) -> list[str]:
     return saida
 
 
-def build_prompt(dossier: Dossier, correcoes: list[str] | None = None) -> str:
+def build_prompt(dossier: Dossier, correcoes: list[str] | None = None,
+                 mode: str = "long") -> str:
     """Monta o prompt do roteiro. Funcao livre para o teste inspecionar o texto."""
     fatos = "\n".join(
         f"[{i}] {f.claim}\n    fonte: {f.source_name}"
         + (f'\n    trecho: "{f.quote}"' if f.quote else "")
         for i, f in enumerate(dossier.facts)
     )
-    alvo = (MIN_PALAVRAS + MAX_PALAVRAS) // 2
+    minimo, maximo = BANDS[mode]
+    tmin, tmax = TERMS_PER_MODE[mode]
+    alvo = (minimo + maximo) // 2
+    fechamento = (
+        "- closing: o fechamento com PONTO DE VISTA PROPRIO. Nao e resumo do que "
+        "foi dito. O melhor fechamento aponta o que as fontes NAO dizem, ou a "
+        "pergunta que elas deixam sem resposta, e devolve isso ao espectador. "
+        "Encerre com uma chamada que nao seja 'siga para mais'.\n"
+        if mode == "long" else
+        "- closing: UMA frase que reconecta com a pergunta do hook, para o video "
+        "recomecar sozinho no replay. Sem 'siga para mais'.\n"
+    )
+
+    duracao_txt = (
+        f"Isso equivale a {MIN_DURATION_S}-{MAX_DURATION_S}s falados e e "
+        "requisito de monetizacao, nao preferencia.\n"
+        if mode == "long" else
+        "Video curto de alcance (~15s): nao monetiza, pesca publico. "
+        "Uma ideia so.\n")
 
     partes = [
         f"TEMA: {dossier.topic}\n",
@@ -365,21 +435,17 @@ def build_prompt(dossier: Dossier, correcoes: list[str] | None = None) -> str:
         "informacao e nao responde-la -- e o que decide se a pessoa continua "
         "assistindo. Nada de 'hoje eu vou falar sobre'.\n"
         "- body: o desenvolvimento. Todo dado vem de um fato do dossie.\n"
-        "- closing: o fechamento com PONTO DE VISTA PROPRIO. Nao e resumo do que "
-        "foi dito. O melhor fechamento aponta o que as fontes NAO dizem, ou a "
-        "pergunta que elas deixam sem resposta, e devolve isso ao espectador. "
-        "Encerre com uma chamada que nao seja 'siga para mais'.\n"
-        "- search_terms: de 4 a 8 termos de busca de video de banco de imagens, "
-        "EM INGLES, na ordem cronologica da narracao -- o material do primeiro "
-        "termo abre o video. Cada termo e COPIADO da lista de ESTETICA, nunca "
-        "um conceito abstrato ('innovation').\n"
+        + fechamento +
+        f"- search_terms: de {tmin} a {tmax} termos de busca de video de banco "
+        "de imagens, EM INGLES, na ordem cronologica da narracao -- o material "
+        "do primeiro termo abre o video. Cada termo e COPIADO da lista de "
+        "ESTETICA, nunca um conceito abstrato ('innovation').\n"
         "- used_facts: os indices dos fatos do dossie em que o roteiro se apoia.\n",
         visual_brief(suggest_pillar(dossier.topic)),
         "REGRAS\n"
         f"- A narracao inteira (hook + body + closing) precisa ter entre "
-        f"{MIN_PALAVRAS} e {MAX_PALAVRAS} palavras, ou seja cerca de {alvo}. "
-        f"Isso equivale a {MIN_DURATION_S}-{MAX_DURATION_S}s falados e e "
-        "requisito de monetizacao, nao preferencia.\n"
+        f"{minimo} e {maximo} palavras, ou seja cerca de {alvo}. "
+        + duracao_txt +
         "- Escreva numero por extenso quando ficar melhor de ouvir "
         "('cinco virgula nove gigabytes'), mas nunca mude o valor.\n"
         "- Nao invente numero, nome, data nem citacao. Se o dossie nao diz, o "

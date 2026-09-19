@@ -69,8 +69,10 @@ class Script(BaseModel):
     hook: str = Field(min_length=10, description="primeiros ~1,5s; abre lacuna de informacao")
     body: str = Field(min_length=50)
     closing: str = Field(min_length=10)
-    search_terms: list[str] = Field(min_length=3, max_length=12)
+    search_terms: list[str] = Field(min_length=2, max_length=12)
     facts: list[Fact] = Field(default_factory=list)
+    # long = 60-90s (monetiza), short = ~15s (alcance, nao monetiza).
+    format: str = "long"
 
     @field_validator("search_terms")
     @classmethod
@@ -255,6 +257,92 @@ class RenderState(StrEnum):
     processing = "processing"
     complete = "complete"
     failed = "failed"
+
+
+CAROUSEL_SLIDES = 5
+CAROUSEL_MAX_WORDS_PER_SLIDE = 15
+
+
+class Slide(BaseModel):
+    """Um slide do carrossel: promessa curta + visual do pilar."""
+
+    n: int = Field(ge=1, le=CAROUSEL_SLIDES)
+    headline: str = Field(min_length=3)
+    text: str = Field(min_length=3)
+    # Tag verbatim do vocabulario visual (writer/visuals.py), um pilar so.
+    visual: str = Field(min_length=3)
+
+    @property
+    def word_count(self) -> int:
+        return len(f"{self.headline} {self.text}".split())
+
+
+class Carousel(BaseModel):
+    """Roteiro de carrossel: 5 slides 1080x1920 + legenda que puxa comentario."""
+
+    topic: str = Field(min_length=3)
+    slides: list[Slide] = Field(min_length=CAROUSEL_SLIDES,
+                                max_length=CAROUSEL_SLIDES)
+    caption: str = Field(min_length=10)
+    facts: list[Fact] = Field(default_factory=list)
+    format: str = "carousel"
+
+    @model_validator(mode="after")
+    def _ordem(self) -> Carousel:
+        if [s.n for s in self.slides] != [1, 2, 3, 4, 5]:
+            raise ValueError("slides fora de ordem 1-5")
+        return self
+
+
+CAROUSEL_CUTOFF = 6
+CAROUSEL_MAX = 8
+
+
+class CarouselReview(BaseModel):
+    """Parecer do carrossel: politica medido, 3 critérios lidos.
+
+    Corte em 6/8, nenhum critério zerado, politica sem veto. O resto do
+    mecanico (5 slides, 15 palavras, save no 5, numero no 1) ja passou no
+    roteirista -- mandar isso ao juiz gastaria cota para conferir `len().
+    """
+
+    topic: str
+    scores: list[CriterionScore]
+    reviewed_at: datetime
+    model: str = ""
+    provider: str = ""
+
+    @property
+    def total(self) -> int:
+        return sum(s.score for s in self.scores)
+
+    @property
+    def by_criterion(self) -> dict[Criterion, CriterionScore]:
+        return {s.criterion: s for s in self.scores}
+
+    @property
+    def zeroed(self) -> list[CriterionScore]:
+        return [s for s in self.scores if s.score == 0 and s.evaluated]
+
+    @property
+    def approved(self) -> bool:
+        pol = self.by_criterion.get(Criterion.politica)
+        return (
+            self.total >= CAROUSEL_CUTOFF
+            and not self.zeroed
+            and pol is not None and pol.score == 2
+        )
+
+    @property
+    def short_circuited(self) -> bool:
+        return any(not s.evaluated for s in self.scores)
+
+    @property
+    def revision_notes(self) -> list[str]:
+        """O que devolver ao roteirista de carrossel, mais barato primeiro."""
+        return [f"[{s.criterion.value} {s.score}/2] {s.reason}"
+                for s in sorted(self.scores, key=lambda s: s.score)
+                if s.score < 2 and s.evaluated]
 
 
 class RenderResult(BaseModel):

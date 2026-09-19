@@ -324,12 +324,21 @@ def write(
     llm: str = typer.Option("", "--llm", help="gemini ou groq; padrao vem do .env"),
     out: Path = typer.Option(None, "--out", "-o", help="grava o roteiro em JSON para render"),
     dry_run: bool = typer.Option(False, "--dry-run", help="nao grava na memoria"),
+    mode: str = typer.Option("long", "--mode",
+                               help="long (60-90s), short (~15s) ou carousel"),
+    polish: bool = typer.Option(True, "--polish/--no-polish",
+                                help="humanizacao apos o aceite mecanico"),
 ) -> None:
     """Escreve o roteiro a partir de um dossie ja gravado."""
     from agent.adapters.llm_factory import build_llm
     from agent.memory.store import SignalStore
     from agent.ports.llm import LLMError
     from agent.writer.writer import Screenwriter
+
+    if mode not in ("long", "short", "carousel"):
+        typer.secho(f"modo {mode!r} desconhecido; use long, short ou carousel.",
+                    fg=typer.colors.RED)
+        raise typer.Exit(code=2)
 
     settings.ensure_dirs()
     store = SignalStore(settings.db_path)
@@ -352,11 +361,15 @@ def write(
     except LLMError as exc:
         typer.secho(str(exc), fg=typer.colors.RED)
         raise typer.Exit(code=2) from exc
-    typer.echo(f"modelo    : {modelo.provider}/{modelo.model}")
+    typer.echo(f"modelo    : {modelo.provider}/{modelo.model} (modo {mode})")
+
+    if mode == "carousel":
+        _write_carousel_cmd(store, dossier, modelo, out, dry_run)
+        return
 
     typer.echo("escrevendo (corrige sozinho o que e mecanico)...")
     try:
-        report = Screenwriter(modelo).write(dossier)
+        report = Screenwriter(modelo).write(dossier, mode=mode, polish=polish)
     except LLMError as exc:
         typer.secho(f"falha do provedor: {exc}", fg=typer.colors.RED)
         raise typer.Exit(code=1) from exc
@@ -375,10 +388,17 @@ def write(
             for v in tentativa.violations:
                 typer.secho(f"  - {v}", fg=typer.colors.BRIGHT_BLACK)
 
+    if report.humanized:
+        typer.secho("humanizacao aplicada "
+                    f"({'; '.join(report.humanize_notes)})", fg=typer.colors.GREEN)
+    elif report.humanize_notes:
+        typer.secho(f"humanizacao mantida no original: "
+                    f"{'; '.join(report.humanize_notes)}", fg=typer.colors.YELLOW)
+
     custo = report.usage
     typer.echo(f"custo     : {custo.input_tokens} tokens de entrada, "
-               f"{custo.output_tokens} de saida, {report.latency_s}s de modelo, "
-               f"{len(report.attempts)} tentativa(s)")
+                f"{custo.output_tokens} de saida, {report.latency_s}s de modelo, "
+                f"{len(report.attempts)} tentativa(s)")
 
     if not report.ok:
         typer.secho("\nnenhum roteiro passou nos portoes mecanicos", fg=typer.colors.RED)
@@ -429,6 +449,127 @@ def write(
     typer.echo(f"\nroteiro #{linha} gravado ({store.script_count()} na memoria)")
 
 
+def _write_carousel_cmd(store: Any, dossier: Any, modelo: Any,
+                        out: Path | None, dry_run: bool) -> None:
+    """Ramo carrossel do `write`: 5 slides + legenda, sem juiz aqui."""
+    from agent.ports.llm import LLMError
+    from agent.writer.carousel import write_carousel
+
+    typer.echo("escrevendo carrossel (5 slides, portoes proprios)...")
+    try:
+        report = write_carousel(dossier, modelo)
+    except LLMError as exc:
+        typer.secho(f"falha do provedor: {exc}", fg=typer.colors.RED)
+        raise typer.Exit(code=1) from exc
+
+    if report.refusal:
+        typer.secho(f"\n{report.refusal}", fg=typer.colors.RED)
+        raise typer.Exit(code=1)
+
+    for i, tentativa in enumerate(report.attempts, start=1):
+        if tentativa.violations:
+            typer.secho(f"tentativa {i} reprovada:", fg=typer.colors.YELLOW)
+            for v in tentativa.violations:
+                typer.secho(f"  - {v}", fg=typer.colors.BRIGHT_BLACK)
+
+    custo = report.usage
+    typer.echo(f"custo     : {custo.input_tokens} tokens de entrada, "
+               f"{custo.output_tokens} de saida, {report.latency_s}s de modelo")
+
+    if not report.ok or report.carousel is None:
+        typer.secho("\nnenhum carrossel passou nos portoes mecanicos",
+                    fg=typer.colors.RED)
+        raise typer.Exit(code=1)
+
+    for s in report.carousel.slides:
+        typer.echo(f"\n  [{s.n}/5] {s.headline}\n  {s.text}\n  ~ {s.visual}")
+    typer.echo(f"\n  legenda: {report.carousel.caption}")
+
+    if out is not None:
+        out.write_text(
+            report.carousel.model_dump_json(indent=2, exclude_none=True) + "\n",
+            encoding="utf-8",
+        )
+        typer.echo(f"\ngravado em {out}")
+        typer.echo(f"julque com: uv run agent judge --script {out}")
+        typer.echo(f"slides com: uv run agent carousel-render --carousel {out}")
+
+    if dry_run:
+        typer.secho("\n--dry-run: carrossel nao gravado na memoria",
+                    fg=typer.colors.YELLOW)
+        return
+    linha = store.record_carousel(
+        report.carousel, model=modelo.model, provider=modelo.provider,
+        usage=(custo.input_tokens, custo.output_tokens),
+        latency_s=report.latency_s, attempts=[a.violations for a in report.attempts],
+    )
+    typer.echo(f"\ncarrossel #{linha} gravado")
+
+
+def _is_carousel_file(path: Path) -> bool:
+    try:
+        return "slides" in json.loads(path.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return False
+
+
+def _judge_carousel_cmd(store: Any, path: Path, llm: str, dry_run: bool) -> None:
+    """Parecer de carrossel (rubrica propria, corte 6/8)."""
+    from datetime import UTC, datetime
+
+    from agent.adapters.llm_factory import build_llm
+    from agent.judge.carousel import judge_carousel
+    from agent.models import Carousel, CarouselReview, Dossier
+    from agent.ports.llm import LLMError
+
+    try:
+        carrossel = Carousel.model_validate_json(path.read_text(encoding="utf-8"))
+    except ValueError as exc:
+        typer.secho(f"carrossel invalido: {exc}", fg=typer.colors.RED)
+        raise typer.Exit(code=2) from exc
+    dossier = Dossier(topic=carrossel.topic, facts=carrossel.facts,
+                      collected_at=datetime.now(UTC))
+    if not dossier.facts:
+        typer.secho("carrossel sem nenhum fato: nao ha dossie contra o que julgar",
+                    fg=typer.colors.RED)
+        raise typer.Exit(code=2)
+
+    typer.echo(f"tema      : {carrossel.topic}")
+    typer.echo(f"carrossel : {len(carrossel.slides)} slides")
+    try:
+        modelo = build_llm(llm or None)
+    except LLMError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED)
+        raise typer.Exit(code=2) from exc
+    typer.echo(f"modelo    : {modelo.provider}/{modelo.model}")
+    try:
+        report = judge_carousel(carrossel, dossier, modelo)
+    except LLMError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED)
+        raise typer.Exit(code=1) from exc
+
+    review: CarouselReview | None = report.review
+    assert review is not None
+    for s in review.scores:
+        cor = (typer.colors.GREEN if s.score == 2
+               else typer.colors.YELLOW if s.score == 1 else typer.colors.RED)
+        typer.secho(f"  [{s.score}/2] {s.criterion.value}: {s.reason}", fg=cor)
+    estado = "APROVADO" if review.approved else "REPROVADO"
+    typer.secho(f"\n{estado}: {review.total}/8 (corte 6, nenhum zerado)",
+                fg=typer.colors.GREEN if review.approved else typer.colors.RED)
+    typer.echo(f"custo     : {report.usage.total_tokens} tokens, {report.latency_s}s")
+
+    if not dry_run:
+        linha = store.record_carousel(
+            carrossel, model=modelo.model, provider=modelo.provider,
+            usage=(report.usage.input_tokens, report.usage.output_tokens),
+            latency_s=report.latency_s, attempts=[],
+            review=review,
+        )
+        typer.echo(f"parecer de carrossel gravado (carrossel #{linha})")
+    raise typer.Exit(code=0 if review.approved else 1)
+
+
 def _mostrar_parecer(review) -> None:
     """Imprime a rubrica inteira, critério a critério.
 
@@ -476,7 +617,7 @@ def judge(
     llm: str = typer.Option("", "--llm", help="gemini ou groq; padrao vem do .env"),
     dry_run: bool = typer.Option(False, "--dry-run", help="nao grava o parecer"),
 ) -> None:
-    """Aplica a rubrica de 7 critérios a um roteiro."""
+    """Aplica a rubrica a um roteiro (video) ou carrossel (detecta pelo arquivo)."""
     from datetime import UTC, datetime
 
     from agent.adapters.llm_factory import build_llm
@@ -487,6 +628,10 @@ def judge(
 
     settings.ensure_dirs()
     store = SignalStore(settings.db_path)
+
+    if script_path is not None and _is_carousel_file(script_path):
+        _judge_carousel_cmd(store, script_path, llm, dry_run)
+        return
 
     if script_path is not None:
         script = _load_script(script_path)
@@ -555,6 +700,7 @@ def produce(
     revisions: int = typer.Option(2, "--revisions", help="teto de rodadas de revisao"),
     llm: str = typer.Option("", "--llm", help="gemini ou groq; padrao vem do .env"),
     dry_run: bool = typer.Option(False, "--dry-run", help="nao grava na memoria"),
+    mode: str = typer.Option("long", "--mode", help="long, short ou carousel"),
 ) -> None:
     """Escreve, julga e revisa ate o roteiro passar na rubrica ou estourar as rodadas."""
     from agent.adapters.llm_factory import build_llm
@@ -563,6 +709,10 @@ def produce(
     from agent.pipeline import produce as rodar
     from agent.ports.llm import LLMError
     from agent.writer.writer import Screenwriter
+
+    if mode not in ("long", "short", "carousel"):
+        typer.secho(f"modo {mode!r} desconhecido.", fg=typer.colors.RED)
+        raise typer.Exit(code=2)
 
     settings.ensure_dirs()
     store = SignalStore(settings.db_path)
@@ -573,6 +723,10 @@ def produce(
                     fg=typer.colors.RED)
         raise typer.Exit(code=2)
 
+    if mode == "carousel":
+        _produce_carousel_cmd(store, dossier, llm, out, revisions, dry_run)
+        return
+
     typer.echo(f"tema      : {dossier.topic}")
     typer.echo(f"dossie    : {len(dossier.facts)} fatos de "
                f"{len(dossier.source_urls)} fonte(s)")
@@ -581,10 +735,11 @@ def produce(
     except LLMError as exc:
         typer.secho(str(exc), fg=typer.colors.RED)
         raise typer.Exit(code=2) from exc
-    typer.echo(f"modelo    : {modelo.provider}/{modelo.model}")
+    typer.echo(f"modelo    : {modelo.provider}/{modelo.model} (modo {mode})")
     typer.echo(f"ate {revisions + 1} rodada(s) de roteiro + parecer...")
 
-    report = rodar(dossier, Screenwriter(modelo), Judge(modelo), max_revisions=revisions)
+    report = rodar(dossier, Screenwriter(modelo), Judge(modelo),
+                   max_revisions=revisions, mode=mode)
     if report.failure:
         typer.secho(f"falha no meio do laco — {report.failure}", fg=typer.colors.RED)
 
@@ -632,6 +787,64 @@ def produce(
         typer.secho("\n--dry-run: nada gravado na memoria", fg=typer.colors.YELLOW)
         return
     _gravar(store, report, dossier)
+
+
+def _produce_carousel_cmd(store: Any, dossier: Any, llm: str, out: Path | None,
+                          revisions: int, dry_run: bool) -> None:
+    """Laco de carrossel: escreve, julga, revisa ate passar (corte 6/8)."""
+    from agent.adapters.llm_factory import build_llm
+    from agent.pipeline import produce_carousel as rodar
+    from agent.ports.llm import LLMError
+
+    typer.echo(f"tema      : {dossier.topic}")
+    try:
+        modelo = build_llm(llm or None)
+    except LLMError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED)
+        raise typer.Exit(code=2) from exc
+    typer.echo(f"modelo    : {modelo.provider}/{modelo.model} (modo carousel)")
+
+    report = rodar(dossier, modelo, max_revisions=revisions)
+    if report.failure:
+        typer.secho(f"falha no meio do laco — {report.failure}", fg=typer.colors.RED)
+    for i, rodada in enumerate(report.rounds, start=1):
+        typer.echo("")
+        typer.secho(f"--- rodada {i} ---", bold=True)
+        if rodada.write is not None:
+            for t in rodada.write.attempts:
+                for v in t.violations:
+                    typer.secho(f"  - {v}", fg=typer.colors.BRIGHT_BLACK)
+        if rodada.review is not None and rodada.review.review is not None:
+            for s in rodada.review.review.scores:
+                typer.echo(f"  [{s.score}/2] {s.criterion.value}: {s.reason}")
+
+    custo = report.usage
+    typer.echo(f"\ncusto total: {custo.input_tokens} in, {custo.output_tokens} out, "
+               f"{report.latency_s}s")
+    if not report.approved:
+        typer.secho("nenhum carrossel aprovado nas rodadas.", fg=typer.colors.RED)
+        raise typer.Exit(code=1)
+
+    carrossel = report.carousel
+    assert carrossel is not None
+    typer.secho("CARROSSEL APROVADO", fg=typer.colors.GREEN, bold=True)
+    if out is not None:
+        out.write_text(
+            carrossel.model_dump_json(indent=2, exclude_none=True) + "\n",
+            encoding="utf-8")
+        typer.echo(f"gravado em {out}")
+        typer.echo(f"slides com: uv run agent carousel-render --carousel {out}")
+    if dry_run:
+        typer.secho("\n--dry-run: nada gravado na memoria", fg=typer.colors.YELLOW)
+        return
+    linha = store.record_carousel(
+        carrossel, model=modelo.model, provider=modelo.provider,
+        usage=(custo.input_tokens, custo.output_tokens),
+        latency_s=report.latency_s,
+        attempts=[a.violations for r in report.rounds if r.write for a in r.write.attempts],
+        review=report.review,
+    )
+    typer.echo(f"carrossel #{linha} gravado")
 
 
 def _gravar(store: Any, report: Any, dossier: Any) -> None:
@@ -822,7 +1035,13 @@ def eval(
     custo total e ultima metrica de cada post. E relatorio, nao portao: sai 0
     mesmo com a base vazia.
     """
-    from agent.eval.eval import ReviewRow, ScriptRow, build_report, format_text
+    from agent.eval.eval import (
+        CarouselRow,
+        ReviewRow,
+        ScriptRow,
+        build_report,
+        format_text,
+    )
     from agent.memory.store import SignalStore
     from agent.models import Review
 
@@ -845,11 +1064,16 @@ def eval(
             latency_s=r["latency_s"],
         ))
 
-    if not scripts and not reviews:
+    if not scripts and not reviews and not store.list_carousels(topic or None):
         typer.echo("nada a agregar: sem roteiros nem pareceres na memoria.")
         return
 
-    typer.echo(format_text(build_report(scripts, reviews)), nl=False)
+    carousels = [CarouselRow(
+        id=r["id"], topic=r["topic"], model=r["model"], provider=r["provider"],
+        approved=bool(r["approved"]), input_tokens=r["input_tokens"],
+        output_tokens=r["output_tokens"], latency_s=r["latency_s"],
+    ) for r in store.list_carousels(topic or None)]
+    typer.echo(format_text(build_report(scripts, reviews, carousels)), nl=False)
 
     vistos: set[str] = set()
     with store._conn() as conn:
@@ -866,11 +1090,14 @@ def eval(
             if m is None:
                 typer.echo(f"  {p['publish_id']}: {p['status']} (sem metrica)")
             else:
+                acao = "".join(
+                    f" {k}={m[k]}" for k in ("saves", "comments", "shares")
+                    if m.get(k) is not None)
                 typer.echo(
                     f"  {p['publish_id']}: {p['status']} "
                     f"views={m['views']} "
                     f"watch~{m['avg_watch_s']}s "
-                    f"completion={m['completion_rate']}"
+                    f"completion={m['completion_rate']}{acao}"
                 )
 
 
@@ -884,12 +1111,17 @@ def metrics_record(
                                      help="fracao 0..1 que assistiu ate o fim"),
     script_id: int = typer.Option(None, "--script-id",
                                   help="roteiro que gerou o video (fecha o loop)"),
+    saves: int = typer.Option(None, "--saves", min=0,
+                              help="salvamentos (placar do carrossel)"),
+    comments: int = typer.Option(None, "--comments", min=0),
+    shares: int = typer.Option(None, "--shares", min=0),
 ) -> None:
     """Grava uma coleta de metricas lida no app (views, watch, completion).
 
     Manual de proposito: no escopo video.upload da inbox nao ha endpoint de
     metricas, e a Research API e restrita a pesquisa academica. Cada coleta
     entra na serie do publish_id -- a curva, nao o numero isolado, e o sinal.
+    saves/comments/shares sao o placar do carrossel e o desempate do video.
     """
     from agent.memory.store import SignalStore
 
@@ -898,11 +1130,54 @@ def metrics_record(
         linha = SignalStore(settings.db_path).record_metric(
             publish_id, views, script_id=script_id,
             avg_watch_s=avg_watch, completion_rate=completion,
+            saves=saves, comments=comments, shares=shares,
         )
     except ValueError as exc:
         typer.secho(str(exc), fg=typer.colors.RED)
         raise typer.Exit(code=2) from exc
     typer.echo(f"metrica #{linha} gravada para {publish_id}")
+
+
+@app.command("carousel-render")
+def carousel_render(
+    carousel: Path = typer.Option(..., "--carousel", exists=True, readable=True),
+    out_dir: Path = typer.Option(None, "--out-dir",
+                                 help="pasta dos slides; padrao: output/carrossel-<ts>"),
+    font: str = typer.Option("", "--font", help="ttf; padrao tenta o do renderizador"),
+) -> None:
+    """Renderiza os 5 slides 1080x1920 do carrossel + caption.txt, local."""
+    from datetime import datetime
+
+    from agent.models import Carousel as CarouselModel
+    from agent.render.carousel import render_carousel
+
+    try:
+        modelo = CarouselModel.model_validate_json(carousel.read_text(encoding="utf-8"))
+    except ValueError as exc:
+        typer.secho(f"carrossel invalido: {exc}", fg=typer.colors.RED)
+        raise typer.Exit(code=2) from exc
+
+    destino = out_dir or settings.output_dir / (
+        f"carrossel-{datetime.now().strftime('%Y%m%d-%H%M%S')}")
+    slides = render_carousel(modelo, destino, font or None)
+    for s in slides:
+        typer.echo(f"  {s} ({s.stat().st_size} bytes)")
+    typer.echo(f"legenda em {destino / 'caption.txt'}")
+    _checar_slides(slides)
+
+
+def _checar_slides(slides: list[Path]) -> None:
+    """Aceite do carrossel: 5 PNG 1080x1920 nao vazios."""
+    from PIL import Image
+
+    ok = len(slides) == 5
+    for s in slides:
+        with Image.open(s) as img:
+            ok = ok and img.size == (1080, 1920) and s.stat().st_size > 0
+    (typer.secho("[OK  ] 5 slides 1080x1920", fg=typer.colors.GREEN)
+     if ok else typer.secho("[FALHA] slides fora do aceite", fg=typer.colors.RED))
+    if not ok:
+        raise typer.Exit(code=1)
 
 
 if __name__ == "__main__":

@@ -39,6 +39,41 @@ class ScriptRow:
     input_tokens: int
     output_tokens: int
     latency_s: float
+    format: str = "long"
+
+
+@dataclass(frozen=True)
+class CarouselRow:
+    id: int
+    topic: str
+    model: str
+    provider: str
+    approved: bool
+    input_tokens: int
+    output_tokens: int
+    latency_s: float
+
+
+@dataclass
+class WriterSummary:
+    key: str
+    format: str = "long"
+    n: int = 0
+    avg_words: float = 0.0
+    attempts: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    latency_s: float = 0.0
+
+
+@dataclass
+class CarouselSummary:
+    key: str
+    n: int = 0
+    approval_rate: float = 0.0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    latency_s: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -52,17 +87,6 @@ class ReviewRow:
     input_tokens: int
     output_tokens: int
     latency_s: float
-
-
-@dataclass
-class WriterSummary:
-    key: str
-    n: int = 0
-    avg_words: float = 0.0
-    attempts: int = 0
-    input_tokens: int = 0
-    output_tokens: int = 0
-    latency_s: float = 0.0
 
 
 @dataclass
@@ -89,28 +113,47 @@ class EvalReport:
     writers: list[WriterSummary] = field(default_factory=list)
     judges: list[JudgeSummary] = field(default_factory=list)
     paired: list[PairedCell] = field(default_factory=list)
+    carousels: list[CarouselSummary] = field(default_factory=list)
     n_scripts: int = 0
     n_reviews: int = 0
+    n_carousels: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
     latency_s: float = 0.0
 
 
 def summarize_writers(scripts: list[ScriptRow]) -> list[WriterSummary]:
-    agreg: dict[str, WriterSummary] = {}
+    agreg: dict[tuple[str, str], WriterSummary] = {}
     for s in scripts:
-        k = chave(s.provider, s.model)
-        w = agreg.setdefault(k, WriterSummary(key=k))
+        k = (s.format or "long", chave(s.provider, s.model))
+        w = agreg.setdefault(k, WriterSummary(key=k[1], format=k[0]))
         w.n += 1
         w.avg_words += s.word_count
         w.attempts += s.attempts
         w.input_tokens += s.input_tokens
         w.output_tokens += s.output_tokens
         w.latency_s += s.latency_s
-    saidas = sorted(agreg.values(), key=lambda w: w.key)
+    saidas = sorted(agreg.values(), key=lambda w: (w.format, w.key))
     for w in saidas:
         w.avg_words = round(w.avg_words / w.n, 1) if w.n else 0.0
         w.latency_s = round(w.latency_s, 3)
+    return saidas
+
+
+def summarize_carousels(rows: list[CarouselRow]) -> list[CarouselSummary]:
+    agreg: dict[str, CarouselSummary] = {}
+    for r in rows:
+        k = chave(r.provider, r.model)
+        c = agreg.setdefault(k, CarouselSummary(key=k))
+        c.n += 1
+        c.approval_rate += int(r.approved)
+        c.input_tokens += r.input_tokens
+        c.output_tokens += r.output_tokens
+        c.latency_s += r.latency_s
+    saidas = sorted(agreg.values(), key=lambda c: c.key)
+    for c in saidas:
+        c.approval_rate = round(c.approval_rate / c.n, 3) if c.n else 0.0
+        c.latency_s = round(c.latency_s, 3)
     return saidas
 
 
@@ -168,22 +211,30 @@ def paired_matrix(
 
 
 def build_report(
-    scripts: list[ScriptRow], reviews: list[ReviewRow]
+    scripts: list[ScriptRow], reviews: list[ReviewRow],
+    carousels: list[CarouselRow] | None = None,
 ) -> EvalReport:
+    carousels = carousels or []
     return EvalReport(
-        topics=sorted({s.topic for s in scripts} | {r.topic for r in reviews}),
+        topics=sorted({s.topic for s in scripts} | {r.topic for r in reviews}
+                      | {c.topic for c in carousels}),
         writers=summarize_writers(scripts),
         judges=summarize_judges(reviews),
         paired=paired_matrix(scripts, reviews),
+        carousels=summarize_carousels(carousels),
         n_scripts=len(scripts),
         n_reviews=len(reviews),
+        n_carousels=len(carousels),
         input_tokens=sum(s.input_tokens for s in scripts)
-        + sum(r.input_tokens for r in reviews),
+        + sum(r.input_tokens for r in reviews)
+        + sum(c.input_tokens for c in carousels),
         output_tokens=sum(s.output_tokens for s in scripts)
-        + sum(r.output_tokens for r in reviews),
+        + sum(r.output_tokens for r in reviews)
+        + sum(c.output_tokens for c in carousels),
         latency_s=round(
             sum(s.latency_s for s in scripts)
-            + sum(r.latency_s for r in reviews),
+            + sum(r.latency_s for r in reviews)
+            + sum(c.latency_s for c in carousels),
             3,
         ),
     )
@@ -193,13 +244,14 @@ def format_text(report: EvalReport) -> str:
     """Tabela pronta para o terminal e para colar no README."""
     linhas = [
         f"temas    : {len(report.topics)} ({', '.join(report.topics) or 'nenhum'})",
-        f"roteiros : {report.n_scripts} | pareceres: {report.n_reviews}",
+        f"roteiros : {report.n_scripts} | pareceres: {report.n_reviews} "
+        f"| carrosseis: {report.n_carousels}",
         "",
-        "escritor (roteiros, palavras medias, tentativas, tokens in/out, latencia):",
+        "escritor [formato] (roteiros, palavras medias, tentativas, tokens in/out, latencia):",
     ]
     for w in report.writers:
         linhas.append(
-            f"  {w.key}: n={w.n} palavras~{w.avg_words} "
+            f"  [{w.format}] {w.key}: n={w.n} palavras~{w.avg_words} "
             f"tent={w.attempts} tok={w.input_tokens}/{w.output_tokens} {w.latency_s}s"
         )
     linhas.append("")
@@ -222,6 +274,16 @@ def format_text(report: EvalReport) -> str:
     else:
         linhas.append("  (sem parecer ligado a roteiro conhecido)")
     linhas.append("")
+    linhas.append("carrossel (aprovacao, tokens in/out, latencia):")
+    if report.carousels:
+        for c in report.carousels:
+            linhas.append(
+                f"  {c.key}: n={c.n} aprov={c.approval_rate:.0%} "
+                f"tok={c.input_tokens}/{c.output_tokens} {c.latency_s}s"
+            )
+    else:
+        linhas.append("  (nenhum carrossel gravado)")
+    linhas.append("")
     linhas.append(
         f"custo total: {report.input_tokens} tokens de entrada, "
         f"{report.output_tokens} de saida, {report.latency_s}s de modelo"
@@ -230,6 +292,8 @@ def format_text(report: EvalReport) -> str:
 
 
 __all__ = [
+    "CarouselRow",
+    "CarouselSummary",
     "Criterion",
     "EvalReport",
     "JudgeSummary",
@@ -241,6 +305,7 @@ __all__ = [
     "chave",
     "format_text",
     "paired_matrix",
+    "summarize_carousels",
     "summarize_judges",
     "summarize_writers",
 ]
