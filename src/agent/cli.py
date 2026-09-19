@@ -26,8 +26,11 @@ def _load_script(path: Path) -> Script:
 @app.command()
 def render(
     script_path: Path = typer.Option(..., "--script", "-s", exists=True, readable=True),
+    out_dir: Path = typer.Option(None, "--out-dir",
+                                 help="pasta do pacote; padrao organiza por dia/hora/tema"),
 ) -> None:
     """Renderiza um roteiro em MP4 vertical e confere o aceite do M0."""
+    from agent.paths import run_dir
     script = _load_script(script_path)
     typer.echo(f"tema      : {script.topic}")
     typer.echo(f"narracao  : {script.word_count} palavras "
@@ -60,6 +63,19 @@ def render(
     typer.echo(f"dimensoes : {result.width}x{result.height}")
     typer.echo(f"duracao   : {result.duration_s}s")
     typer.echo(f"narracao  : {'presente' if result.has_audio else 'AUSENTE'}")
+
+    if out_dir is None:
+        out_dir = run_dir(script.format or "long", script.topic,
+                          base=settings.output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    destino = out_dir / "video.mp4"
+    if result.video_path and Path(result.video_path) != destino:
+        Path(result.video_path).replace(destino)
+    script_path_out = out_dir / "roteiro.json"
+    if Path(script_path) != script_path_out:
+        script_path_out.write_text(
+            Path(script_path).read_text(encoding="utf-8"), encoding="utf-8")
+    typer.echo(f"pacote    : {out_dir}")
 
     # Aceite do M0, medido e nao presumido.
     checks = [
@@ -122,8 +138,16 @@ def radar(
 def curate(
     show: int = typer.Option(8, "--show", help="quantos rejeitados detalhar"),
     dry_run: bool = typer.Option(False, "--dry-run", help="nao grava no ledger"),
+    top: int = typer.Option(1, "--top", help="candidatos distintos p/ a rotina do dia"),
+    cooldown_days: int = typer.Option(30, "--cooldown-days",
+                                      help="janela anti-repeticao do ledger"),
 ) -> None:
-    """Coleta sinais e escolhe UM tema, registrando o motivo de cada decisao."""
+    """Coleta sinais e escolhe tema(s), registrando o motivo de cada decisao.
+
+    `--top 3` lista os 3 melhores assuntos DISTINTOS (deduplicados entre si)
+    para a rotina long+short+carrossel do dia. Repetir assunto so e valido
+    como atualizacao explicita (`research --topic`), nunca pelo curador.
+    """
     from agent.curator.curator import Curator
     from agent.memory.store import SignalStore
     from agent.models import Verdict
@@ -139,14 +163,14 @@ def curate(
         typer.secho("nenhum sinal coletado", fg=typer.colors.RED)
         raise typer.Exit(code=1)
 
-    ledger = store.recent_topics()
+    ledger = store.recent_topics(days=cooldown_days)
     report = Curator().curate(coleta.signals, ledger=ledger)
 
     contagem = report.tally()
     typer.echo("")
     typer.echo(f"{len(coleta.signals)} sinais -> "
                + "  ".join(f"{k}={v}" for k, v in contagem.items() if v))
-    typer.echo(f"ledger: {len(ledger)} temas ja aprovados nos ultimos 30 dias")
+    typer.echo(f"ledger: {len(ledger)} temas aprovados nos ultimos {cooldown_days} dias")
 
     for verdict, cor in ((Verdict.rejected_policy, typer.colors.RED),
                          (Verdict.rejected_duplicate, typer.colors.YELLOW)):
@@ -169,6 +193,12 @@ def curate(
     if escolhido.news_items:
         typer.echo(f"  {len(escolhido.news_items)} materias ja associadas pela fonte")
 
+    candidatos = [d for d in report.top(top) if d.term != escolhido.term]
+    if candidatos:
+        typer.echo("\n  rotina do dia (distintos, sem repetir):")
+        for i, d in enumerate(candidatos, start=2):
+            typer.echo(f"    {i}. {d.term[:58]} (score {d.score:.3f})")
+
     vice = [d for d in report.by_verdict(Verdict.not_selected)][:4]
     if vice:
         typer.echo("\n  proximos colocados:")
@@ -185,7 +215,9 @@ def curate(
 @app.command()
 def research(
     topic: str = typer.Option(
-        "", "--topic", "-t", help="pesquisa este tema; sem isso, roda o curador"
+        "", "--topic", "-t",
+        help="pesquisa este tema; sem isso, roda o curador. "
+             "Tema explicito e atualizacao intencional.",
     ),
     url: list[str] = typer.Option(
         [], "--url", "-u", help="fonte explicita (repetivel); pula a descoberta"
@@ -1372,6 +1404,114 @@ def brand_avatar(
                "rotulo AIGC ligado")
     typer.echo("\n--- negativo ---")
     typer.echo(brand.negative_prompt)
+
+
+@app.command()
+def status() -> None:
+    """Resumo da memoria: contexto e qualidade num relance."""
+    from agent.memory.store import SignalStore
+
+    store = SignalStore(settings.db_path)
+    with store._conn() as conn:
+        n = lambda t: conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+        temas = [r["term"] for r in conn.execute(
+            "SELECT term FROM topics WHERE verdict='selected'"
+            " ORDER BY decided_at DESC LIMIT 5").fetchall()]
+        pend = [dict(r) for r in conn.execute(
+            "SELECT publish_id, status FROM posts ORDER BY created_at DESC LIMIT 3"
+        ).fetchall()]
+    toks = 0
+    for tabela in ("dossiers", "scripts", "reviews"):
+        with store._conn() as conn:
+            toks += conn.execute(
+                f"SELECT COALESCE(SUM(input_tokens+output_tokens),0) FROM {tabela}"
+            ).fetchone()[0]
+    typer.echo(f"sinais={n('signals')} temas={n('topics')} dossies={n('dossiers')} "
+               f"roteiros={n('scripts')} pareceres={n('reviews')} "
+               f"carrosseis={n('carousels')} posts={n('posts')} metricas={n('metrics')}")
+    typer.echo(f"tokens totais medidos: {toks}")
+    if temas:
+        typer.echo("ultimos temas: " + " | ".join(t[:48] for t in temas))
+    for p in pend:
+        m = store.latest_metric(p["publish_id"])
+        extra = f" views={m['views']}" if m else ""
+        typer.echo(f"  {p['publish_id'][:30]}: {p['status']}{extra}")
+
+
+@app.command()
+def preflight(
+    video: Path = typer.Option(None, "--video",
+                               help="mp4 do pacote (video); omita no carrossel"),
+    script: Path = typer.Option(None, "--script", "-s",
+                                help="roteiro.json ou carrossel.json do pacote"),
+    slides_dir: Path = typer.Option(None, "--slides",
+                                    help="pasta dos slides (carrossel)"),
+) -> None:
+    """Camada final antes de producao: confere o pacote sem julgar de novo.
+
+    Portoes: parecer aprovado ligado ao texto, MP4 1080x1920 com audio na
+    faixa do formato (ou 5 slides + caption no carrossel), fatos com fonte.
+    O checklist humano (AIGC, legenda) sai no fim, sempre.
+    """
+    from agent.memory.store import SignalStore
+    from agent.models import Carousel
+    from agent.publish.preflight import (
+        CHECKLIST,
+        preflight_carousel,
+        preflight_video,
+    )
+
+    if script is None:
+        typer.secho("informe --script (roteiro ou carrossel do pacote).",
+                    fg=typer.colors.RED)
+        raise typer.Exit(code=2)
+    if not script.exists():
+        typer.secho(f"arquivo ausente: {script}", fg=typer.colors.RED)
+        raise typer.Exit(code=2)
+
+    import json as _json
+    raw = _json.loads(script.read_text(encoding="utf-8"))
+    store = SignalStore(settings.db_path)
+
+    if "slides" in raw:
+        carrossel = Carousel.model_validate(raw)
+        rows = store.list_carousels(carrossel.topic)
+        aprovado = any(r["approved"] for r in rows)
+        ok_slides = True
+        if slides_dir is not None:
+            from PIL import Image
+            pngs = sorted(slides_dir.glob("slide-*.png"))
+            ok_slides = len(pngs) == 5 and all(
+                Image.open(p).size == (1080, 1920) for p in pngs)
+            ok_slides = ok_slides and (slides_dir / "caption.txt").exists()
+        report = preflight_carousel(raw, aprovado, ok_slides)
+    else:
+        probe = None
+        if video is not None and video.exists():
+            from agent.adapters.mpt_renderer import probe_video
+            try:
+                probe = probe_video(video)
+            except Exception as exc:
+                probe = {"error": str(exc)[:120]}
+        elif video is not None:
+            typer.secho(f"video ausente: {video}", fg=typer.colors.RED)
+        report = preflight_video(
+            raw, store.list_scripts(raw.get("topic")),
+            store.list_reviews(raw.get("topic")), probe)
+
+    ok = True
+    for g in report.gates:
+        mark = "OK  " if g.passed else "FALHA"
+        typer.secho(f"[{mark}] {g.label}"
+                    + (f" -- {g.detail}" if g.detail else ""),
+                    fg=typer.colors.GREEN if g.passed else typer.colors.RED)
+        ok = ok and g.passed
+
+    typer.echo("\nchecklist humano (nao automatizavel):")
+    for item in CHECKLIST:
+        typer.echo(f"  [ ] {item}")
+
+    raise typer.Exit(code=0 if ok else 1)
 
 
 if __name__ == "__main__":

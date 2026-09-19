@@ -42,6 +42,20 @@ class CurationReport:
     def eligible(self) -> list[Decision]:
         return [d for d in self.decisions if d.verdict in (Verdict.selected, Verdict.not_selected)]
 
+    def top(self, n: int) -> list[Decision]:
+        """Os n melhores elegiveis, o escolhido primeiro.
+
+        A rotina publica 3 pecas/dia em temas diferentes: o top-3 da mesma
+        coleta ja vem deduplicado entre si (o laco anexa o escolhido ao
+        ledger), entao pesquisar os 3 nao repete assunto no mesmo dia.
+        """
+        ordenados = sorted(
+            self.eligible,
+            key=lambda d: (d.verdict is Verdict.selected, d.score),
+            reverse=True,
+        )
+        return ordenados[:max(1, n)]
+
     def by_verdict(self, verdict: Verdict) -> list[Decision]:
         return [d for d in self.decisions if d.verdict is verdict]
 
@@ -107,16 +121,24 @@ class Curator:
         )
 
         for posicao, (s, encaixe, score) in enumerate(pontuados):
-            escolhido = posicao == 0
-            # Evita escolher o mesmo assunto duas vezes na MESMA coleta, quando
-            # duas fontes trazem a mesma historia com titulos diferentes.
-            if escolhido:
-                ledger.append(s.term)
+            # Reconfere contra o ledger corrido (originais + ja ranqueados):
+            # duas fontes podem trazer a mesma historia, e o top-3 do dia
+            # precisa de 3 assuntos diferentes, nao 3 titulos do mesmo.
+            duplicata = self._dedup.find_duplicate(s.term, ledger)
+            if duplicata is not None:
+                original, sim = duplicata
+                decisions.append(_decisao(
+                    s, Verdict.rejected_duplicate, agora,
+                    reason=f"ja coberto (similaridade {sim:.2f} com '{original[:60]}')",
+                    score=0.0, niche_fit=encaixe, duplicate_of=original,
+                ))
+                continue
+            ledger.append(s.term)
             decisions.append(_decisao(
                 s,
-                Verdict.selected if escolhido else Verdict.not_selected,
+                Verdict.selected if posicao == 0 else Verdict.not_selected,
                 agora,
-                reason=(_justificativa(s, encaixe, score) if escolhido
+                reason=(_justificativa(s, encaixe, score) if posicao == 0
                         else f"passou nos portoes, ficou em {posicao + 1}o (score {score:.3f})"),
                 score=score,
                 niche_fit=encaixe,
