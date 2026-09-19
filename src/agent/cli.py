@@ -811,5 +811,99 @@ def tiktok_auth_url(
     ))
 
 
+@app.command()
+def eval(
+    topic: str = typer.Option("", "--topic", "-t", help="tema; sem isso, agrega tudo"),
+) -> None:
+    """Tabula escritor x juiz com custo medido, sem chamar modelo nenhum.
+
+    Le roteiros e pareceres ja gravados e imprime: agregado por escritor, por
+    juiz (parecer interrompido fora da media), matriz pareada no mesmo roteiro,
+    custo total e ultima metrica de cada post. E relatorio, nao portao: sai 0
+    mesmo com a base vazia.
+    """
+    from agent.eval.eval import ReviewRow, ScriptRow, build_report, format_text
+    from agent.memory.store import SignalStore
+    from agent.models import Review
+
+    settings.ensure_dirs()
+    store = SignalStore(settings.db_path)
+
+    scripts = [ScriptRow(**r) for r in store.list_scripts(topic or None)]
+    reviews = []
+    for r in store.list_reviews(topic or None):
+        try:
+            review = Review.model_validate_json(r["review_json"])
+        except ValueError as exc:
+            typer.secho(f"parecer #{r['id']} com JSON invalido: {exc}",
+                        fg=typer.colors.RED)
+            raise typer.Exit(code=1) from exc
+        reviews.append(ReviewRow(
+            id=r["id"], topic=r["topic"], script_id=r["script_id"],
+            model=r["model"], provider=r["provider"], review=review,
+            input_tokens=r["input_tokens"], output_tokens=r["output_tokens"],
+            latency_s=r["latency_s"],
+        ))
+
+    if not scripts and not reviews:
+        typer.echo("nada a agregar: sem roteiros nem pareceres na memoria.")
+        return
+
+    typer.echo(format_text(build_report(scripts, reviews)), nl=False)
+
+    vistos: set[str] = set()
+    with store._conn() as conn:
+        posts = [dict(r) for r in conn.execute(
+            "SELECT publish_id, video_path, status FROM posts"
+            " ORDER BY created_at DESC, id DESC").fetchall()]
+    if posts:
+        typer.echo("posts (ultima metrica lida no app; a API da inbox nao expoe):")
+        for p in posts:
+            if p["publish_id"] in vistos:
+                continue
+            vistos.add(p["publish_id"])
+            m = store.latest_metric(p["publish_id"])
+            if m is None:
+                typer.echo(f"  {p['publish_id']}: {p['status']} (sem metrica)")
+            else:
+                typer.echo(
+                    f"  {p['publish_id']}: {p['status']} "
+                    f"views={m['views']} "
+                    f"watch~{m['avg_watch_s']}s "
+                    f"completion={m['completion_rate']}"
+                )
+
+
+@app.command("metrics-record")
+def metrics_record(
+    publish_id: str = typer.Option(..., "--publish-id"),
+    views: int = typer.Option(..., "--views", min=0),
+    avg_watch: float = typer.Option(None, "--avg-watch", min=0.0,
+                                    help="tempo medio de exibicao em segundos"),
+    completion: float = typer.Option(None, "--completion", min=0.0, max=1.0,
+                                     help="fracao 0..1 que assistiu ate o fim"),
+    script_id: int = typer.Option(None, "--script-id",
+                                  help="roteiro que gerou o video (fecha o loop)"),
+) -> None:
+    """Grava uma coleta de metricas lida no app (views, watch, completion).
+
+    Manual de proposito: no escopo video.upload da inbox nao ha endpoint de
+    metricas, e a Research API e restrita a pesquisa academica. Cada coleta
+    entra na serie do publish_id -- a curva, nao o numero isolado, e o sinal.
+    """
+    from agent.memory.store import SignalStore
+
+    settings.ensure_dirs()
+    try:
+        linha = SignalStore(settings.db_path).record_metric(
+            publish_id, views, script_id=script_id,
+            avg_watch_s=avg_watch, completion_rate=completion,
+        )
+    except ValueError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED)
+        raise typer.Exit(code=2) from exc
+    typer.echo(f"metrica #{linha} gravada para {publish_id}")
+
+
 if __name__ == "__main__":
     app()

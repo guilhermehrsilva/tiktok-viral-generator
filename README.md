@@ -442,7 +442,23 @@ melhorar o hook de um roteiro que cita número sem fonte.
 | M2 | Curador: score, filtro de política, dedup por memória | **concluído** |
 | M3 | Pesquisador + roteirista + juiz com rubrica | **concluído** |
 | M4 | Publicador (TikTok, inbox, rótulo AIGC) | **código pronto, sem rede real** — falta app registrado + 1º post no app |
-| M5 | Eval: free tier vs. modelo pago na mesma rubrica | a fazer |
+| M5 | Eval: free tier x free tier na mesma rubrica + métricas do post | **em andamento** — `agent eval` (offline) e `agent metrics-record` prontos; 1ª rodada real abaixo |
+
+## Eval (M5) — primeiros números
+
+Primeira rodada real em 19/09/2026, tema único (Bonsai 2 27B), `uv run agent eval`.
+O braço pago (Claude) está fora de escopo — sem API paga, não há número a
+publicar. A comparação é free tier x free tier:
+
+| | gemini (`gemini-2.5-flash`) | groq (`openai/gpt-oss-120b`) |
+|---|---|---|
+| pesquisador | 4 fatos, 0 descartes, 2525 in / 489 out | 4 fatos, 0 descartes, 2537 in / 684 out |
+| roteirista | OK, 180 palavras (~72s), 1 tentativa | **falha 2x**: `400 json_validate_failed` (não gerou JSON válido antes do teto de tokens) |
+| juiz (mesmo roteiro) | 12/14 APROVADO | **14/14 APROVADO** — 2 pontos mais generoso (hook 2x1, ponto de vista 2x1) |
+
+`produce` gemini ponta a ponta: APROVADO 12/14, 186 palavras, 2038 in / 648 out.
+Métricas do post (`agent metrics-record`) são lidas no app à mão: a inbox não
+expõe endpoint de métricas e a Research API é restrita a pesquisa acadêmica.
 
 ## Limites conhecidos
 
@@ -461,11 +477,11 @@ Publicados aqui de propósito, não escondidos.
 - **O edge-tts usa o endpoint de leitura em voz alta do Edge.** Grátis, sem contrato, pode
   quebrar. O fallback planejado é o Kokoro-82M local (Apache 2.0, vozes pt-BR), que roda
   em CPU.
-- **Os adaptadores de LLM ainda não foram exercitados contra a API real.** Os
-  testes cobrem o contrato (payload, tradução de schema, contagem de tokens, tipo
-  de exceção por falha) contra o formato de resposta documentado, não contra o
-  serviço. Enquanto `uv run agent llm-health` não rodar com chave, o id de modelo
-  padrão é suposição — e o projeto verifica artefato, não configuração.
+- **Os adaptadores de LLM foram exercitados contra a API real em 19/09/2026.**
+  `llm-health` responde nos dois free tiers; pesquisador, roteirista (gemini) e
+  juiz (gemini e groq) rodaram de verdade no tema Bonsai 2. O roteirista groq
+  (`gpt-oss-120b`) falha em `json_validate_failed` — registrado no Eval acima,
+  não aqui.
 - **O portão de trecho reprova paráfrase.** Quando o modelo reescreve onde devia
   copiar, o fato cai mesmo que seja verdadeiro. O erro é assimétrico de propósito:
   dossiê curto com motivo gravado é calibrável, dossiê cheio de fato frouxo não.

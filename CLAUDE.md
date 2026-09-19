@@ -33,11 +33,19 @@ O que já roda ponta a ponta, a custo zero:
 | `uv run agent publish-status --publish-id <id>` | consulta o estado e atualiza `posts` |
 | `uv run agent tiktok-auth-url` | imprime a URL de autorização OAuth (escopo video.upload) |
 
-**M4 está com o código pronto e testado sem rede (365 testes).** Falta a parte
+**M4 commitado (b81b928).** Falta a parte
 que só existe com conta: registrar o app em developers.tiktok.com (escopo
 `video.upload`), autorizar via `tiktok-auth-url`, gravar
 `AGENT_TIKTOK_ACCESS_TOKEN` no `.env` e conferir o primeiro post real no app
 -- inbox + rótulo AIGC ligado manualmente, que o endpoint inbox não recebe.
+
+**M5 em andamento (fatia 1, 19/09/2026).** Chaves de LLM configuradas e
+`llm-health` OK nos dois free tiers. Primeira rodada real no tema Bonsai 2:
+pesquisador OK nos dois (4 fatos, 0 descartes), roteirista gemini OK (180
+palavras, 1 tentativa), roteirista groq (`gpt-oss-120b`) falha 2x em
+`json_validate_failed`, juiz gemini 12/14 x juiz groq 14/14 no mesmo roteiro.
+`agent eval` (offline, sem cota) e `agent metrics-record` prontos, 376 testes.
+Braço Claude **fora de escopo** (decisão do autor: sem API paga).
 
 O aceite do M3 é conferível agora, sem chave nenhuma:
 
@@ -45,26 +53,14 @@ O aceite do M3 é conferível agora, sem chave nenhuma:
 uv run agent judge --script fixtures/roteiro_sem_fonte.json   # reprova, 0 tokens, exit 1
 ```
 
-### O que falta verificar com chave
+### Verificado com chave em 19/09/2026
 
-Os adaptadores foram testados contra o **formato** de resposta, não contra o serviço. Não
-há chave de LLM nesta máquina ainda. Antes de escrever o roteirista:
-
-```bash
-# as duas são gratuitas e sem cartão
-echo 'AGENT_GEMINI_API_KEY=...' >> .env    # aistudio.google.com/apikey
-echo 'AGENT_GROQ_API_KEY=...'   >> .env    # console.groq.com/keys
-
-uv run agent llm-health                    # confirma id de modelo e custo real
-uv run agent research --topic "Bonsai 2 27B: modelo de 27B em 5,9 GB" \
-  --url https://prismml.com/news/bonsai-2-27b
-uv run agent write --out output/roteiro.json     # usa o dossiê que acabou de gravar
-```
-
-Se `llm-health` falhar com 404, o id de modelo padrão em `config.py` foi descontinuado —
-é configuração, não código. E vale olhar a lista de descartes da primeira pesquisa real:
-se o portão de trecho estiver derrubando quase tudo, ele está apertado demais e a
-calibração tem dado (os descartes ficam gravados em `dossiers.discarded_json`).
+`llm-health` OK nos dois free tiers (gemini `gemini-2.5-flash`, groq
+`openai/gpt-oss-120b`). Primeira rodada real no tema Bonsai 2 gravada no banco
+(dossiês #2 e #3, roteiros #1 e #2, pareceres #3 a #5) e tabulada no README,
+seção Eval. Achados: roteirista groq falha em `json_validate_failed`, juiz
+groq 2 pontos mais generoso que o gemini no mesmo texto. Portão de trecho com
+0 descartes nesta fonte -- sem sinal de aperto excessivo por enquanto.
 
 ### Para retomar o ambiente
 
@@ -103,7 +99,7 @@ uv run pytest && uv run ruff check .
 
 ## Para onde vamos
 
-### M3 — pesquisador + roteirista + juiz (em andamento)
+### M3 — pesquisador + roteirista + juiz (concluído)
 
 É onde entra **o primeiro LLM do projeto**, e a maior parte do valor de portfólio.
 
@@ -147,12 +143,19 @@ OAuth do TikTok + Content Posting API via `video.upload` (inbox — **não** exi
 Rótulo AIGC sempre ligado, sem flag para desligar. Respeitar 6 req/min por token.
 Primeiro post real conferido no app antes de qualquer automação.
 
-### M5 — eval e feedback loop
+### M5 — eval e feedback loop (fatia 1 pronta; Claude fora de escopo)
 Conjunto fixo de temas → roteiro por configuração de modelo → juiz cego, com custo medido.
-Compara free tier contra Claude na mesma rubrica. Coleta métricas do post publicado
+~~Compara free tier contra Claude na mesma rubrica.~~ Braço pago fora de escopo (sem API
+paga): a comparação é **free tier x free tier** (gemini x groq). Coleta métricas do post publicado
 (views, watch time, completion) e liga ao roteiro que as gerou — o único sinal real de
 viralidade. Também é onde a troca do deduplicador lexical por embedding vira experimento
 medido, e não upgrade assumido.
+
+Fatia 1 (19/09/2026): `agent eval` agrega offline roteiros e pareceres gravados
+(escritor x juiz + matriz pareada no mesmo roteiro, parecer interrompido fora da
+média); `agent metrics-record` grava a série por `publish_id` com `script_id`
+opcional fechando o loop. Falta: conjunto fixo com 2–3 temas (hoje só Bonsai 2)
+e as primeiras métricas reais do app.
 
 ---
 

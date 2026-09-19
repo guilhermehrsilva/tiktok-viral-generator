@@ -137,6 +137,24 @@ CREATE TABLE IF NOT EXISTS posts (
     created_at    TEXT    NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_posts_publish ON posts(publish_id, created_at DESC);
+
+-- Metricas do post publicado, serie temporal: o mesmo publish_id pode ter
+-- varias coletas (views sobem com o tempo), e a curva e o unico sinal real de
+-- viralidade. Leitura manual do app por enquanto: a Content Posting API, no
+-- escopo video.upload da inbox, nao expoe endpoint de metricas -- e a Research
+-- API e restrita a pesquisa academica. `script_id` fecha o loop com o roteiro
+-- que gerou o video; NULL quando o vinculo nao e conhecido.
+CREATE TABLE IF NOT EXISTS metrics (
+    id              INTEGER PRIMARY KEY,
+    publish_id      TEXT    NOT NULL,
+    script_id       INTEGER,
+    views           INTEGER NOT NULL,
+    avg_watch_s     REAL,
+    completion_rate REAL,
+    collected_at    TEXT    NOT NULL,
+    FOREIGN KEY (script_id) REFERENCES scripts(id)
+);
+CREATE INDEX IF NOT EXISTS idx_metrics_publish ON metrics(publish_id, collected_at DESC);
 """
 
 
@@ -426,6 +444,92 @@ class SignalStore:
     def post_count(self) -> int:
         with self._conn() as conn:
             return int(conn.execute("SELECT COUNT(*) AS n FROM posts").fetchone()["n"])
+
+    # ------------------------------------------------------------------ roteiros/pareceres (eval)
+
+    def list_scripts(self, topic: str | None = None) -> list[dict]:
+        """Linhas de roteiro para o eval, com custo. Sem parsing aqui."""
+        sql = ("SELECT id, topic, model, provider, word_count, attempts,"
+               " input_tokens, output_tokens, latency_s FROM scripts")
+        params: tuple = ()
+        if topic:
+            sql += " WHERE topic = ?"
+            params = (topic,)
+        sql += " ORDER BY created_at, id"
+        with self._conn() as conn:
+            return [dict(r) for r in conn.execute(sql, params).fetchall()]
+
+    def list_reviews(self, topic: str | None = None) -> list[dict]:
+        """Linhas de parecer para o eval, com o JSON para agregar por criterio."""
+        sql = ("SELECT id, topic, script_id, model, provider, review_json,"
+               " input_tokens, output_tokens, latency_s FROM reviews")
+        params: tuple = ()
+        if topic:
+            sql += " WHERE topic = ?"
+            params = (topic,)
+        sql += " ORDER BY created_at, id"
+        with self._conn() as conn:
+            return [dict(r) for r in conn.execute(sql, params).fetchall()]
+
+    # ------------------------------------------------------------------ metricas (M5)
+
+    def record_metric(
+        self,
+        publish_id: str,
+        views: int,
+        *,
+        script_id: int | None = None,
+        avg_watch_s: float | None = None,
+        completion_rate: float | None = None,
+    ) -> int:
+        """Grava uma coleta de metricas. Devolve o id da linha.
+
+        Falha cedo em numero impossivel: views negativo, completion fora de
+        0..1 ou watch negativo entram na serie e corrompem a curva sem aviso.
+        """
+        if not publish_id:
+            raise ValueError("metrica sem publish_id")
+        if views < 0:
+            raise ValueError("views negativo")
+        if avg_watch_s is not None and avg_watch_s < 0:
+            raise ValueError("tempo medio de exibicao negativo")
+        if completion_rate is not None and not 0.0 <= completion_rate <= 1.0:
+            raise ValueError("completion_rate fora de 0..1")
+        with self._conn() as conn:
+            cur = conn.execute(
+                "INSERT INTO metrics (publish_id, script_id, views, avg_watch_s,"
+                " completion_rate, collected_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    publish_id, script_id, views, avg_watch_s, completion_rate,
+                    datetime.now(UTC).isoformat(),
+                ),
+            )
+        return int(cur.lastrowid or 0)
+
+    def latest_metric(self, publish_id: str) -> dict | None:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT publish_id, script_id, views, avg_watch_s,"
+                " completion_rate, collected_at FROM metrics"
+                " WHERE publish_id = ? ORDER BY collected_at DESC, id DESC LIMIT 1",
+                (publish_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def metrics_for(self, publish_id: str) -> list[dict]:
+        """A serie inteira de um post, em ordem de coleta (a curva)."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT publish_id, script_id, views, avg_watch_s,"
+                " completion_rate, collected_at FROM metrics"
+                " WHERE publish_id = ? ORDER BY collected_at, id",
+                (publish_id,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def metric_count(self) -> int:
+        with self._conn() as conn:
+            return int(conn.execute("SELECT COUNT(*) AS n FROM metrics").fetchone()["n"])
 
 
 def _parse_iso(value: str) -> datetime:
