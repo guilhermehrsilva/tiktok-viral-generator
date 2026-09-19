@@ -80,7 +80,8 @@ class TestExchange:
             base_url="https://open.tiktokapis.com",
             transport=httpx.MockTransport(handler),
         )
-        oauth = TikTokOAuth(Settings(), client)
+        oauth = TikTokOAuth(
+            Settings(tiktok_client_key="", tiktok_client_secret=""), client)
         with pytest.raises(PublisherAuthError, match="developers.tiktok.com"):
             oauth.exchange_code("codigo")
         assert chamadas == []

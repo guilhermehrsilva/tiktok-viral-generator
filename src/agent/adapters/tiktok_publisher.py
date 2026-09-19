@@ -8,9 +8,11 @@ Fluxo, conforme a referencia `Upload` da API (atualizada em 04/08/2026):
    A API responde 206 por chunk parcial e 201 no ultimo.
 3. Opcional: `POST /v2/post/publish/status/fetch/` com o `publish_id`.
 
-Limites honrados aqui, nao na chamada: 6 req/min por token (só `init` e
-`status` contam -- o PUT vai para outro host), videos < 5 MB em chunk unico,
-> 64 MB obrigatoriamente em multiplos chunks, maximo 1000 chunks.
+Limites honrados aqui, nao na chamada (guia "Media Transfer" da API):
+`total_chunk_count` e `video_size // chunk_size` (piso, nao teto); cada chunk
+de 5 MB a 64 MB, exceto o ultimo, que absorve o resto (ate 128 MB); abaixo de
+5 MB sobe inteiro com `chunk_size` igual ao arquivo; minimo 1, maximo 1000
+chunks, sempre sequenciais.
 
 O que este adaptador NAO faz, de proposito: titulo, descricao e `is_aigc` nao
 existem no endpoint inbox -- tentar envia-los seria 400. Rotular como AIGC e
@@ -20,7 +22,7 @@ etapa manual no app, e a CLI cobra isso em vez de fingir que a API resolve.
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -87,16 +89,22 @@ class TikTokPublisher:
                 error=f"arquivo nao encontrado: {video_path}",
             )
         blob = path.read_bytes()
-        chunk_size = self._chunk_size(len(blob))
+        if not blob:
+            return PublishResult(
+                state=PublishState.failed,
+                video_path=video_path,
+                error=f"arquivo vazio: {video_path}",
+            )
+        chunk_size, total_chunks = self._plan(len(blob))
 
         try:
             publish_id, upload_url = self._init(
                 access_token,
                 video_size=len(blob),
                 chunk_size=chunk_size,
-                total_chunks=len(list(_ranges(len(blob), chunk_size))),
+                total_chunks=total_chunks,
             )
-            self._send_chunks(upload_url, blob, chunk_size)
+            self._send_chunks(upload_url, blob, chunk_size, total_chunks)
         except PublisherError as exc:
             return PublishResult(
                 state=PublishState.failed, video_path=video_path, error=str(exc)
@@ -169,9 +177,11 @@ class TikTokPublisher:
 
     # -------------------------------------------------------------------- PUT
 
-    def _send_chunks(self, upload_url: str, blob: bytes, chunk_size: int) -> None:
+    def _send_chunks(
+        self, upload_url: str, blob: bytes, chunk_size: int, total_chunks: int
+    ) -> None:
         total = len(blob)
-        intervalos = list(_ranges(total, chunk_size))
+        intervalos = chunk_ranges(total, chunk_size, total_chunks)
         for i, (primeiro, ultimo) in enumerate(intervalos):
             pedaço = blob[primeiro : ultimo + 1]
             ultimo_esperado = 201 if i == len(intervalos) - 1 else 206
@@ -202,17 +212,26 @@ class TikTokPublisher:
 
     # ------------------------------------------------------------------ apoio
 
-    def _chunk_size(self, total: int) -> int:
-        size = max(1, self.settings.tiktok_chunk_size)
+    def _plan(self, total: int) -> tuple[int, int]:
+        """`(chunk_size, total_chunk_count)` segundo o guia "Media Transfer".
+
+        Abaixo de 5 MB: inteiro, `chunk_size` igual ao arquivo. Acima: piso da
+        divisao, com o ultimo chunk absorvendo o resto (sempre < 2x o chunk, e
+        o chunk nunca passa de 64 MB, entao o teto de 128 MB do ultimo vale).
+        Configuracao fora da faixa 5-64 MB e trazida para dentro: chunk menor
+        que 5 MB seria recusado chunk a chunk no servidor.
+        """
         if total <= SINGLE_CHUNK_MAX:
-            return min(size, total)
-        if total > MULTI_CHUNK_MIN:
-            # Garante multiplos chunks mesmo que a configuracao esteja alta.
-            size = min(size, (total // 2) or 1)
+            return total, 1
+        size = min(max(int(self.settings.tiktok_chunk_size), SINGLE_CHUNK_MAX),
+                   MULTI_CHUNK_MIN)
         # Teto de 1000 chunks: aumenta o chunk em vez de estourar a contagem.
         if total / size > MAX_CHUNKS:
             size = -(-total // MAX_CHUNKS)
-        return size
+        return size, max(1, total // size)
+
+    def _chunk_size(self, total: int) -> int:
+        return self._plan(total)[0]
 
     def _throttle(self) -> None:
         """Dorme o necessario para nao passar de 6 req/min por token.
@@ -234,12 +253,19 @@ class TikTokPublisher:
         return {"Authorization": f"Bearer {access_token}"}
 
 
-def _ranges(total: int, chunk_size: int) -> Iterator[tuple[int, int]]:
-    """Intervalos [primeiro, ultimo] inclusivos, sequenciais, sem buraco."""
-    primeiro = 0
-    while primeiro < total:
-        yield primeiro, min(primeiro + chunk_size, total) - 1
-        primeiro += chunk_size
+def chunk_ranges(total: int, chunk_size: int, total_chunks: int
+                 ) -> list[tuple[int, int]]:
+    """Intervalos [primeiro, ultimo] inclusivos, sequenciais, sem buraco.
+
+    Os `total_chunks - 1` primeiros tem exatamente `chunk_size`; o ultimo vai
+    ate o fim do arquivo, absorvendo o resto -- e o `total_chunk_count` do init
+    que manda, nao o teto da divisao.
+    """
+    return [
+        (i * chunk_size,
+         (i + 1) * chunk_size - 1 if i < total_chunks - 1 else total - 1)
+        for i in range(total_chunks)
+    ]
 
 
 def _corpo(resposta: httpx.Response) -> dict[str, Any]:

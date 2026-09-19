@@ -175,6 +175,14 @@ e as primeiras métricas reais do app.
 - **Toda decisão é gravada com motivo, inclusive as rejeitadas.** Sem isso só se sabe o que
   foi escolhido, nunca o que foi perdido, e calibrar vira chute.
 - **Verificar o artefato, não o código de saída.** Foi assim que o MP4 mudo apareceu.
+- **`total_chunk_count` é piso, não teto.** A API exige `video_size // chunk_size`
+  arredondado para baixo, com o último chunk absorvendo o resto (até 128 MB); cada
+  chunk de 5 a 64 MB, abaixo de 5 MB sobe inteiro. O adaptador mandava teto e o init
+  real devolvia 400 `invalid_params` -- e os testes mockavam o teto e passavam. Só o
+  primeiro post real acusou. Mesma moral do MP4 mudo.
+- **Teste que lê `.env` não é hermético.** `Settings()` vazio puxa o `.env`, então um
+  teste de "sem credencial" passa sem chave na máquina e quebra com chave gravada.
+  Credencial de teste vai explícita no construtor.
 
 ---
 

@@ -15,7 +15,7 @@ from agent.adapters.tiktok_publisher import (
     INIT_PATH,
     STATUS_PATH,
     TikTokPublisher,
-    _ranges,
+    chunk_ranges,
 )
 from agent.config import Settings
 from agent.models import PublishState
@@ -72,20 +72,35 @@ def _mp4(tmp_path, tamanho: int = 10) -> str:
 
 class TestPayloadDoInit:
     def test_source_e_file_upload_com_tamanhos(self):
-        corpo = TikTokPublisher.build_init_payload(27_000_000, 10_000_000, 3)
+        # Numeros do exemplo da doc ("Media Transfer Guide"): 50_000_123 com
+        # chunks de 10_000_000 sao 5 no piso, com o resto no ultimo.
+        corpo = TikTokPublisher.build_init_payload(50_000_123, 10_000_000, 5)
         assert corpo == {
             "source_info": {
                 "source": "FILE_UPLOAD",
-                "video_size": 27_000_000,
+                "video_size": 50_000_123,
                 "chunk_size": 10_000_000,
-                "total_chunk_count": 3,
+                "total_chunk_count": 5,
             }
         }
 
-    def test_intervalos_sao_sequenciais_sem_buraco(self):
-        assert list(_ranges(10, 4)) == [(0, 3), (4, 7), (8, 9)]
-        assert list(_ranges(4, 4)) == [(0, 3)]
-        assert list(_ranges(5, 10)) == [(0, 4)]
+    def test_intervalos_ultimo_absorve_o_resto(self):
+        assert chunk_ranges(50_000_123, 10_000_000, 5) == [
+            (0, 9_999_999), (10_000_000, 19_999_999), (20_000_000, 29_999_999),
+            (30_000_000, 39_999_999), (40_000_000, 50_000_122),
+        ]
+        assert chunk_ranges(4_194_304, 4_194_304, 1) == [(0, 4_194_303)]
+
+    def test_plano_piso_e_inteiro_abaixo_de_5mb(self):
+        pub, _, _ = _publicador([], chunk_size=10_000_000)
+        assert pub._plan(50_000_123) == (10_000_000, 5)
+        assert pub._plan(4_194_304) == (4_194_304, 1)
+
+    def test_config_fora_da_faixa_5_64mb_e_trazida_para_dentro(self):
+        pub, _, _ = _publicador([], chunk_size=4)
+        chunk, n = pub._plan(100_000_000)
+        assert chunk >= 5 * 1024 * 1024
+        assert n == 100_000_000 // chunk
 
 
 class TestUpload:
@@ -100,11 +115,13 @@ class TestUpload:
         assert put.headers["Content-Length"] == "10"
 
     def test_multiplos_chunks_com_206_e_201(self, tmp_path):
-        pub, chamadas, _ = _publicador([(200, INIT_OK), (206, {}), (206, {}), (201, {})])
-        result = pub.upload(_mp4(tmp_path, tamanho=10), access_token="tok")
-        assert result.state is PublishState.uploaded
-        ranges = [c.headers["Content-Range"] for c in chamadas[1:]]
-        assert ranges == ["bytes 0-3/10", "bytes 4-7/10", "bytes 8-9/10"]
+        # Arquivo minusculo cai no caminho inteiro; o fluxo multiplo e
+        # exercitado direto no `_send_chunks`, com os intervalos da doc.
+        pub, chamadas, _ = _publicador([(206, {}), (201, {})])
+        blob = bytes(range(20))
+        pub._send_chunks("https://upload/video?token=abc", blob, 10, 2)
+        ranges = [c.headers["Content-Range"] for c in chamadas]
+        assert ranges == ["bytes 0-9/20", "bytes 10-19/20"]
 
     def test_chunk_rejeitado_vira_falha_com_motivo(self, tmp_path):
         pub, _, _ = _publicador([(200, INIT_OK), (416, {})])
