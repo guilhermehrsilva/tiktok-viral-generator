@@ -17,6 +17,8 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from agent.brand.brand import voice_brief
+from agent.brand.checks import check_emoji_bordao, check_numbers
 from agent.models import (
     CAROUSEL_MAX_WORDS_PER_SLIDE,
     CAROUSEL_SLIDES,
@@ -202,6 +204,8 @@ def _violacoes(carrossel: Carousel, dossier: Dossier, fora: list[int]) -> list[s
         problemas.append(
             "slide com vicio de IA (" + "; ".join(tells[:3]) + "): reescreva "
             "como fala curta de pessoa.")
+    problemas.extend(check_numbers(texto, ignorar_ate=CAROUSEL_SLIDES))
+    problemas.extend(check_emoji_bordao(texto))
     return problemas
 
 
@@ -217,12 +221,13 @@ def build_prompt(dossier: Dossier, correcoes: list[str] | None = None) -> str:
         "- slides 2-4: revelacao progressiva, um dado novo por slide; o melhor "
         "dado no 3 ou 4 (value bomb).\n"
         "- slide 5: conclusao + 'salve para depois'.\n"
-        "- cada slide: headline curta + text de no maximo 12 palavras "
-        "(mire 12 para caber no teto de 15).\n"
+        "- cada slide: headline curta + text de no maximo 10 palavras "
+        "(mire 10 para caber no teto de 12 da marca).\n"
         "- caption: uma linha com a palavra-chave + UMA pergunta.\n"
         "- visual: tag COPIADA da lista de ESTETICA, um pilar so.\n"
         "- used_facts: indices do dossie.\n",
         visual_brief(suggest_pillar(dossier.topic)),
+        voice_brief(),
         "REGRAS\n"
         "- So dado do dossie. Sem emoji, sem hashtag no slide.\n"
         "- pt-BR falado, frase curta.",

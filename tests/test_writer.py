@@ -29,8 +29,7 @@ from agent.writer.writer import (
 
 AGORA = datetime(2026, 9, 18, 12, 0, tzinfo=UTC)
 
-HOOK = ("Um modelo de vinte e sete bilhoes de parametros agora cabe em menos espaco "
-        "que um jogo instalado no seu computador.")
+HOOK = "Um modelo gigante agora cabe no seu bolso."
 FECHAMENTO = ("Numero sem base de comparacao nao e medicao, e marketing. Leve essa "
               "pergunta para o proximo anuncio que voce ler.")
 TERMOS = [
@@ -154,7 +153,7 @@ class TestAncoragemNoDossie:
 
     def test_numero_do_dossie_passa_mesmo_em_notacao_pt_br(self):
         report = escrever(ScriptedLLM(responses=[
-            resposta(extra="Ele ocupa 5,9 GB e retem 98,2% do desempenho."),
+            resposta(extra="Ele ocupa 5,9 GB no disco. Retem quase tudo."),
         ]))
         assert report.ok
 

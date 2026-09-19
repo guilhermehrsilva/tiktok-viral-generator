@@ -14,7 +14,7 @@ from agent.writer.writer import Screenwriter
 
 AGORA = datetime(2026, 9, 18, 12, 0, tzinfo=UTC)
 
-HOOK = "Um modelo de vinte e sete bilhoes de parametros agora cabe num pendrive comum."
+HOOK = "Um modelo gigante agora cabe num pendrive."
 FECHAMENTO = "Que numero de anuncio voce vai conferir na fonte hoje?"
 
 

@@ -260,7 +260,9 @@ class RenderState(StrEnum):
 
 
 CAROUSEL_SLIDES = 5
-CAROUSEL_MAX_WORDS_PER_SLIDE = 15
+# Teto da marca ("frase curta"): 12 palavras na tela. A pesquisa tolera 15,
+# mas a identidade manda -- o prompt mira 10 para caber com folga.
+CAROUSEL_MAX_WORDS_PER_SLIDE = 12
 
 
 class Slide(BaseModel):

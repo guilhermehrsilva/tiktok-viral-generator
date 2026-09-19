@@ -30,7 +30,8 @@ DESCRICOES: dict[Criterion, str] = {
     Criterion.hook: (
         "O slide 1 abre lacuna de informacao com promessa numerada? 2 = da "
         "vontade de arrastar; 1 = interessa mas entrega o assunto; 0 = titulo "
-        "generico ou payoff ja no slide 1."
+        "generico ou payoff ja no slide 1. Promessa que os slides nao pagam "
+        "(ex. '5 IAs' com uma so mostrada) zera."
     ),
     Criterion.fonte: (
         "Tudo que os slides afirmam esta no dossie? 2 = tudo sustentado; 1 = "

@@ -1143,11 +1143,13 @@ def carousel_render(
     carousel: Path = typer.Option(..., "--carousel", exists=True, readable=True),
     out_dir: Path = typer.Option(None, "--out-dir",
                                  help="pasta dos slides; padrao: output/carrossel-<ts>"),
-    font: str = typer.Option("", "--font", help="ttf; padrao tenta o do renderizador"),
+    pillar: str = typer.Option("", "--pillar",
+                               help="news|fato|analise|tutorial|futuro|vs; vazio sugere pelo tema"),
 ) -> None:
     """Renderiza os 5 slides 1080x1920 do carrossel + caption.txt, local."""
     from datetime import datetime
 
+    from agent.brand.brand import suggest_content_pillar
     from agent.models import Carousel as CarouselModel
     from agent.render.carousel import render_carousel
 
@@ -1157,9 +1159,11 @@ def carousel_render(
         typer.secho(f"carrossel invalido: {exc}", fg=typer.colors.RED)
         raise typer.Exit(code=2) from exc
 
+    pilar = pillar or suggest_content_pillar(modelo.topic)
     destino = out_dir or settings.output_dir / (
         f"carrossel-{datetime.now().strftime('%Y%m%d-%H%M%S')}")
-    slides = render_carousel(modelo, destino, font or None)
+    typer.echo(f"pilar     : {pilar}")
+    slides = render_carousel(modelo, destino, pilar)
     for s in slides:
         typer.echo(f"  {s} ({s.stat().st_size} bytes)")
     typer.echo(f"legenda em {destino / 'caption.txt'}")

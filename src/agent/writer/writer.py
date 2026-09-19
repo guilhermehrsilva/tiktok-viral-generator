@@ -29,6 +29,8 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from agent.brand.brand import voice_brief
+from agent.brand.checks import check_emoji_bordao, check_hook, check_numbers
 from agent.models import (
     MAX_DURATION_S,
     MIN_DURATION_S,
@@ -322,6 +324,12 @@ def _violacoes_mecanicas(script: Script, dossier: Dossier, fora: list[int],
 
     problemas.extend(validate_terms(script.search_terms))
 
+    falha_gancho = check_hook(script.hook)
+    if falha_gancho is not None:
+        problemas.append(falha_gancho)
+    problemas.extend(check_numbers(script.narration))
+    problemas.extend(check_emoji_bordao(script.narration))
+
     return problemas
 
 
@@ -444,7 +452,8 @@ def build_prompt(dossier: Dossier, correcoes: list[str] | None = None,
         "narrado. Devolva:\n"
         "- hook: a abertura. A PRIMEIRA FRASE precisa abrir uma lacuna de "
         "informacao e nao responde-la -- e o que decide se a pessoa continua "
-        "assistindo. Nada de 'hoje eu vou falar sobre'.\n"
+        "assistindo. Ate 12 palavras (regra da marca). Nada de 'hoje eu vou "
+        "falar sobre'.\n"
         "- body: o desenvolvimento. Todo dado vem de um fato do dossie.\n"
         + fechamento +
         f"- search_terms: de {tmin} a {tmax} termos de busca de video de banco "
@@ -456,6 +465,7 @@ def build_prompt(dossier: Dossier, correcoes: list[str] | None = None,
         *([] if mode != "short" else [
             "EXEMPLO DE TAMANHO (15s: copie a extensao, nao o texto)\n"
             + SHORT_EXAMPLE]),
+        voice_brief(),
         "REGRAS\n"
         f"- A narracao inteira (hook + body + closing) precisa ter entre "
         f"{minimo} e {maximo} palavras, ou seja cerca de {alvo}. "

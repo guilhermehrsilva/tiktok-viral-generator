@@ -180,6 +180,16 @@ roteiro ao wav com `[PAUSA]` e `*enfase*`. Rejeitados com motivo: edresson-low
 (sem voz pt-BR). Lacunas: voz feminina aberta não existe; sotaque regional
 ninguém reproduz (variedade = locutor). Amostras em `output/vozes/`.
 
+Fatia 5 (19/09/2026): branding Seu Canal (`brand/brand.json` transcrito do
+guia, `agent/brand/` como fonte única). Portões em todas as camadas: gancho
+≤12 palavras, 1 número/frase, sem emoji/bordão (roteirista e carrossel);
+promessa-que-não-paga zera no juiz (era o furo do slide "5 IAs"); slides na
+paleta com 1 acento por pilar de conteúdo, Space Grotesk/Plex Mono,
+`caption.txt` com as 5 hashtags; símbolo + avatar gerados de
+`scripts/make_brand_assets.py`. Teto do slide 15→12 (marca manda).
+Divergência assumida: guia mira 20–45s, monetização exige ≥60s — long mantém
+voz/regras da marca na duração do Rewards.
+
 ---
 
 ## Regras ao mexer aqui

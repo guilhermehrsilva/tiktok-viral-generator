@@ -433,7 +433,16 @@ agradar a rubrica. Melhor reprovar com o motivo gravado e escolher outro tema.
 As notas de revisão vão ordenadas por custo: **veto primeiro**. Não adianta
 melhorar o hook de um roteiro que cita número sem fonte.
 
-## Estúdio de vozes (TTS local, $0)
+## Marca Seu Canal (todas as camadas obedecem)
+
+Vetor em `brand/brand.json` (transcrito do guia, revisar a cada 90 dias),
+fonte única via `agent/brand/`. O que vale em todo vídeo: fundo #0A0A0C, **1
+acento** (verde #39FF88, ciano #00E0FF só em ruptura), sem rosto, gancho ≤12
+palavras, 1 número/frase, sem emoji/bordão, promessa sempre paga. 6 pilares de
+conteúdo (IA NEWS, FATO, ANÁLISE, COMO FAZER, 2030, VS) com fórmula de gancho
+e CTA próprios; legenda com as 5 hashtags `#ia #inteligenciaartificial
+#tecnologia #ai #seucanal`. Slides e avatar saem da paleta com Space
+Grotesk/Plex Mono (`brand/assets/`).
 
 Narração pt-BR em CPU com Piper/VITS (`agent voice-*`): 176 palavras em ~5s
 (RTF ~0,05–0,1 medido em i5 sem GPU). Biblioteca em `agent/voice/library.py`,
@@ -456,6 +465,8 @@ aberto reproduz; variedade = troca de locutor). Estilos (`documental`,
 `suspense`, `misterio`, `noticia`...) são interpretação sobre os 3 timbres
 (velocidade/pausa/ruído), com `voice-list` mostrando tudo. Marcação no texto:
 `[PAUSA CURTA/MEDIA/LONGA]`, `*enfase*` (micro-pausa — o Piper não tem SSML).
+
+## Estúdio de vozes (TTS local, $0)
 
 ## Marcos
 

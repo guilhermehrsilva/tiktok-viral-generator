@@ -20,7 +20,7 @@ VISUAIS = ["neural network nodes", "abstract digital plexus",
 def slides(headlines=None, texts=None, visuals=None, caption=None) -> str:
     heads = headlines or ["5 dados do Bonsai em 5,9 GB", "Pesa pouco",
                           "Rende muito", "Roda rapido", "Salve para depois"]
-    txts = texts or ["Arraste e veja cada numero",
+    txts = texts or ["Arraste e veja",
                      "Ocupa 5,9 GB no disco",
                      "Mantem 98,2% do desempenho",
                      "Chega a 143 tokens por segundo",
@@ -52,7 +52,7 @@ class TestRoteirista:
         llm = ScriptedLLM(responses=[slides(texts=longo), slides()])
         report = write_carousel(dossie(), llm)
         assert report.ok
-        assert any("teto 15" in v for v in report.attempts[0].violations)
+        assert any("teto 12" in v for v in report.attempts[0].violations)
 
     def test_slide1_sem_numero_reprova(self):
         heads = ["Resumo do modelo", "Pesa pouco", "Rende muito",
@@ -125,8 +125,7 @@ class TestSlides:
     def test_cinco_png_1080x1920(self, tmp_path):
         from PIL import Image
         carrossel = Carousel.model_validate_json(slides())
-        saidas = render_carousel(carrossel, tmp_path / "car",
-                                 font_path=None)
+        saidas = render_carousel(carrossel, tmp_path / "car", "news")
         assert len(saidas) == 5 and (tmp_path / "car" / "caption.txt").exists()
         for s in saidas:
             with Image.open(s) as img:

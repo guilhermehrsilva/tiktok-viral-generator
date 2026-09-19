@@ -61,7 +61,9 @@ DESCRICOES: dict[Criterion, str] = {
     Criterion.hook: (
         "A primeira frase abre uma lacuna de informacao e nao a responde? "
         "2 = da vontade de continuar ouvindo; 1 = interessa mas entrega o assunto "
-        "de graca; 0 = anuncia o tema ('hoje vou falar sobre')."
+        "de graca; 0 = anuncia o tema ('hoje vou falar sobre'). "
+        "Promessa que o video nao paga (ex. anunciar '5 IAs' e mostrar uma) "
+        "zera, mesmo com frase boa."
     ),
     Criterion.fonte: (
         "Toda afirmacao factual da narracao esta sustentada por um fato do "
