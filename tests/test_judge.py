@@ -81,7 +81,8 @@ def julgar(resposta: str, script: Script | None = None, dossier: Dossier | None 
 class TestRubricaCompleta:
     def test_parecer_tem_os_sete_criterios(self):
         report, _ = julgar(parecer())
-        assert set(report.review.by_criterion) == set(Criterion)
+        # A rubrica do video tem 7 criterios; `fluxo` e so do carrossel.
+        assert set(report.review.by_criterion) == set(Criterion) - {Criterion.fluxo}
         assert report.review.total == RUBRIC_MAX
 
     def test_criterio_faltando_no_contrato_e_erro(self):

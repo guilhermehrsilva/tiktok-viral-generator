@@ -1,22 +1,30 @@
-"""Fotos ilustrativas para os slides: Pexels pela tag do pilar, com cache.
+"""Fotos ilustrativas para os slides: Pexels pela tag do pilar ou pelo assunto.
 
-Cada slide ja carrega um `visual` (tag verbatim do vocabulario do canal).
-Este modulo resolve a tag para foto real: busca portrait no Pexels, baixa a
-primeira, guarda em cache. Sem rede ou sem chave, o slide sai so com layout
--- foto e enriquecimento, nunca requisito que trave o render.
+Cada slide ja carrega um `visual` (tag verbatim do vocabulario do canal), e o
+carrossel pode trazer `broll` (o objeto concreto do assunto, em ingles). A
+capa e o miolo usam o assunto; os outros slides, a identidade.
 
-Cache em `output/fotos-cache/`: a mesma tag reusa o arquivo entre renders,
-e a avaliacao local nao paga a busca duas vezes.
+Escolha medida, nao "a primeira foto": o Pexels devolve `alt` (descricao da
+foto), e a nota soma relevancia (palavras do termo no `alt`) com escuridao
+(`avg_color` que a propria API informa -- sem baixar miniatura). O carrossel
+de 19/09 tinha microscopio e cockpit atras de "passkeys": era a primeira
+foto de uma tag generica.
+
+Sem rede ou sem chave, o slide sai so com layout -- foto e enriquecimento,
+nunca requisito que trave o render. Cache em disco por termo+foto.
 """
 
 from __future__ import annotations
 
+import json
 import os
+import re
 import urllib.parse
 import urllib.request
 from pathlib import Path
 
 PEXELS_SEARCH = "https://api.pexels.com/v1/search"
+_PALAVRA = re.compile(r"[a-z0-9]+")
 
 
 def _chave() -> str:
@@ -32,8 +40,6 @@ def _chave() -> str:
 
 def search(query: str, *, per_page: int = 3) -> list[dict]:
     """Fotos portrait para a tag. Devolve dicts crus do Pexels."""
-    import json
-
     params = urllib.parse.urlencode({
         "query": query, "orientation": "portrait", "per_page": per_page})
     req = urllib.request.Request(
@@ -56,19 +62,60 @@ def portrait_url(photo: dict, w: int = 1080, h: int = 1920) -> str:
     return f"{base}{sep}auto=compress&w={w}&h={h}&fit=crop"
 
 
-def fetch(query: str, dest_dir: str | Path) -> Path | None:
-    """Baixa a primeira foto da tag para o cache. None se falhar."""
-    slug = "".join(c if c.isalnum() else "-" for c in query.lower()).strip("-")
+def darkness(photo: dict) -> float:
+    """1 - luminancia do `avg_color` que a API ja devolve (0 claro, 1 escuro)."""
+    cor = str(photo.get("avg_color") or "").lstrip("#")
+    if len(cor) != 6:
+        return 0.5
+    r, g, b = (int(cor[i:i + 2], 16) for i in (0, 2, 4))
+    return round(1 - (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255, 3)
+
+
+def relevance(query: str, photo: dict) -> float:
+    alvo = {p for p in _PALAVRA.findall(query.lower()) if len(p) > 2}
+    if not alvo:
+        return 0.0
+    texto = f"{photo.get('alt') or ''} {photo.get('url') or ''}".lower()
+    presentes = set(_PALAVRA.findall(texto))
+    return round(len(alvo & presentes) / len(alvo), 3)
+
+
+def rank(query: str, photos: list[dict], *, subject: bool,
+         exclude: set[int] | None = None) -> list[dict]:
+    """Fotos ordenadas pela nota; assunto pesa relevancia, pilar pesa escuridao."""
+    fora = exclude or set()
+
+    def nota(p: dict) -> float:
+        rel, esc = relevance(query, p), darkness(p)
+        return 0.7 * rel + 0.3 * esc if subject else 0.35 * rel + 0.65 * esc
+
+    return sorted((p for p in photos if int(p.get("id") or 0) not in fora),
+                  key=lambda p: -nota(p))
+
+
+def fetch(query: str, dest_dir: str | Path, *, subject: bool = False,
+          exclude: set[int] | None = None, used: set[int] | None = None) -> Path | None:
+    """Baixa a melhor foto do termo para o cache. None se falhar.
+
+    `used` recebe o id escolhido: o chamador passa o mesmo conjunto para os
+    cinco slides, e a mesma foto nao aparece duas vezes no carrossel.
+    """
     Path(dest_dir).mkdir(parents=True, exist_ok=True)
-    destino = Path(dest_dir) / f"{slug}.jpg"
-    if destino.exists():
-        return destino
     try:
-        fotos = search(query, per_page=1)
+        fotos = rank(query, search(query, per_page=12), subject=subject,
+                     exclude=(exclude or set()) | (used or set()))
         if not fotos:
             return None
+        foto = fotos[0]
+        pid = int(foto.get("id") or 0)
+        slug = "".join(c if c.isalnum() else "-" for c in query.lower()).strip("-")
+        destino = Path(dest_dir) / f"{slug}-{pid}.jpg"
+        if used is not None:
+            used.add(pid)
+        if destino.exists():
+            return destino
         req = urllib.request.Request(
-            portrait_url(fotos[0]),
+            portrait_url(foto),
             headers={"User-Agent": "tiktok-viral-generator/1.0"})
         with urllib.request.urlopen(req, timeout=60) as r, open(destino, "wb") as f:
             f.write(r.read())
@@ -77,4 +124,4 @@ def fetch(query: str, dest_dir: str | Path) -> Path | None:
         return None
 
 
-__all__ = ["fetch", "portrait_url", "search"]
+__all__ = ["darkness", "fetch", "portrait_url", "rank", "relevance", "search"]

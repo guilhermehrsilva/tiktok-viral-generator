@@ -103,9 +103,13 @@ def default_sources() -> list[RadarSource]:
     nao e radar. Serve de profundidade para um tema ja escolhido (M3), nao para
     descobri-lo.
     """
+    from agent.radar.sources.arquivo import Arquivo, WikipediaOnThisDay
     from agent.radar.sources.gdelt import Gdelt
     from agent.radar.sources.google_trends import GoogleTrends
     from agent.radar.sources.hacker_news import HackerNews
+    from agent.radar.sources.huggingface import HuggingFaceTrending
+    from agent.radar.sources.rss import RssFeeds
     from agent.radar.sources.wikipedia import WikipediaPageviews
 
-    return [HackerNews(), GoogleTrends(), WikipediaPageviews(), Gdelt()]
+    return [HackerNews(), RssFeeds(), HuggingFaceTrending(), GoogleTrends(),
+            WikipediaPageviews(), WikipediaOnThisDay(), Arquivo(), Gdelt()]

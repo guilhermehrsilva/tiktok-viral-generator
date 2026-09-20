@@ -22,10 +22,11 @@ from agent.brand.checks import (
 
 
 class TestVetor:
-    def test_seis_pilares_um_acento_por_peca(self):
+    def test_sete_pilares_um_acento_por_peca(self):
+        """Os seis do guia + historia (20/09/2026, pedido do autor)."""
         brand = load()
-        assert sorted(brand.pillars) == ["analise", "fato", "futuro", "news",
-                                         "tutorial", "vs"]
+        assert sorted(brand.pillars) == ["analise", "fato", "futuro", "historia",
+                                         "news", "tutorial", "vs"]
         for p in brand.pillars.values():
             assert re.fullmatch(r"#[0-9A-F]{6}", p.accent)
         assert brand.accent_for("fato") == "#00E0FF"
@@ -54,10 +55,15 @@ class TestApresentadores:
         assert sorted(brand.presenters) == ["iris", "theo"]
         assert brand.presenters["iris"].seed == 481502
         assert brand.presenters["theo"].seed == 907314
-        assert brand.presenter_for("analise").id == "iris"
-        assert brand.presenter_for("tutorial").id == "theo"
-        assert brand.presenter_for("news") is None
-        assert brand.presenter_for("futuro") is None
+        # Desde a noite de 20/09/2026 o THEO apresenta TODOS os pilares: so
+        # ele tem clipe base filmado, e misturar um apresentador filmado com um
+        # sintetizado no mesmo canal seria uma diferenca de qualidade visivel.
+        for pilar in ("analise", "tutorial", "news", "futuro", "historia",
+                      "fato", "vs"):
+            assert brand.presenter_for(pilar).id == "theo", pilar
+        # A Iris nao foi removida, so ficou sem formato -- ela volta a disputar
+        # pilar sozinha quando `iris_base.json` existir.
+        assert brand.presenters["iris"].formats == ()
 
     def test_vozes_mapeadas_sem_invencao(self):
         brand = load()

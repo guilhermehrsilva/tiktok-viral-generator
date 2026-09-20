@@ -39,6 +39,8 @@ from agent.curator import policy
 from agent.models import (
     MAX_DURATION_S,
     MIN_DURATION_S,
+    SHORT_MAX_DURATION_S,
+    SHORT_MIN_DURATION_S,
     VETO_MINIMO,
     Criterion,
     CriterionScore,
@@ -77,8 +79,9 @@ DESCRICOES: dict[Criterion, str] = {
     ),
     Criterion.pt_br: (
         "E portugues do Brasil falado? 2 = frase curta, voz ativa, soa natural "
-        "lido em voz alta; 1 = passagens escritas demais ou jargao nao "
-        "explicado; 0 = travado, traduzido ao pe da letra."
+        "lido em voz alta; 1 = passagens escritas demais, jargao nao explicado "
+        "ou numeros em sequencia (ficha tecnica lida em voz alta); 0 = travado, "
+        "traduzido ao pe da letra."
     ),
     Criterion.cta: (
         "O fechamento chama para algo especifico, que nao seja 'siga para "
@@ -229,10 +232,13 @@ def _notas_julgadas(resposta: Completion) -> list[CriterionScore]:
                 f"criterio {criterio.value!r} veio com nota invalida: {score!r}"
             )
         motivo = " ".join(str(bruto.get("reason") or "").split())
-        notas.append(CriterionScore(
-            criterion=criterio, score=score,
-            reason=motivo or "o modelo nao justificou a nota",
-        ))
+        # Motivo curto demais ("ok") estourava o min_length do CriterionScore
+        # como ValidationError -- fora do LLMError que o laco trata -- e
+        # derrubava o slot inteiro. Achado no teste do piloto (20/09).
+        if len(motivo) < 3:
+            motivo = (f"o modelo nao justificou a nota ({motivo})" if motivo
+                      else "o modelo nao justificou a nota")
+        notas.append(CriterionScore(criterion=criterio, score=score, reason=motivo))
     return notas
 
 
@@ -279,7 +285,8 @@ def _nao_avaliados(bloqueio: list[CriterionScore]) -> list[CriterionScore]:
 def _notas_medidas(script: Script) -> list[CriterionScore]:
     """Duracao e politica: medida, nunca leitura."""
     duracao = script.estimated_duration_s
-    faixa = (MIN_DURATION_S, MAX_DURATION_S) if script.format != "short" else (10, 20)
+    faixa = ((SHORT_MIN_DURATION_S, SHORT_MAX_DURATION_S) if script.format == "short"
+             else (MIN_DURATION_S, MAX_DURATION_S))
     na_faixa = faixa[0] <= duracao <= faixa[1]
     # Nao existe meio ponto para duracao: ou o video esta na faixa do formato,
     # ou nao e.
@@ -324,6 +331,7 @@ def build_prompt(script: Script, dossier: Dossier) -> str:
         "hook, e 0 quando e CTA generico."
         if script.format == "short" else ""
     )
+    tipo = _expectativa(script.pillar)
     return (
         f"TEMA: {script.topic}\n\n"
         f"DOSSIE DISPONIVEL AO ROTEIRISTA:\n{fatos}\n\n"
@@ -332,9 +340,27 @@ def build_prompt(script: Script, dossier: Dossier) -> str:
         f"CORPO: {script.body}\n\n"
         f"FECHAMENTO: {script.closing}\n\n"
         "RUBRICA (nota de 0 a 2 em cada critério)\n"
-        f"{rubrica}{loop}\n\n"
+        f"{rubrica}{loop}{tipo}\n\n"
         "Devolva um objeto json com um campo por critério, cada um com 'reason' "
         "(uma frase dizendo o que precisa mudar, em portugues) e 'score' (0, 1 ou 2). "
         "Escreva a razao antes da nota. Nao avalie duracao nem politica: "
         "esses dois sao medidos fora do seu parecer."
     )
+
+
+def _expectativa(pillar: str) -> str:
+    """A formula do tipo de conteudo, para o juiz cobrar o que o roteirista recebeu.
+
+    Sem isso o juiz julgaria um tutorial pela regua de noticia: o ponto de
+    vista de um tutorial e "o erro comum que anula tudo", nao uma opiniao.
+    """
+    if not pillar:
+        return ""
+    from agent.brand.brand import load
+
+    p = load().pillars.get(pillar)
+    if p is None:
+        return ""
+    return (f"\nTIPO {p.tag}: gancho esperado = {p.hook_formula}; batidas = "
+            + " -> ".join(p.beats) + ". Use isso para ler hook e ponto_de_vista.")
+

@@ -13,6 +13,7 @@ real -- e qualquer divergencia aparece ali, nao num teste mockado.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
@@ -100,7 +101,12 @@ class TikTokOAuth:
             "application/json"
         ) else {}
         if r.status_code != 200 or not isinstance(corpo, dict) or corpo.get("error"):
-            detalhe = corpo.get("error", {}).get("message", "") if isinstance(corpo, dict) else ""
+            erro = corpo.get("error", "") if isinstance(corpo, dict) else ""
+            # O endpoint v2 devolve `error` como string + `error_description`,
+            # nao como objeto; tratar os dois evita um AttributeError no lugar
+            # do motivo real.
+            detalhe = (erro.get("message", "") if isinstance(erro, dict)
+                       else f"{erro} {corpo.get('error_description', '')}".strip())
             raise PublisherAuthError(f"oauth recusado (HTTP {r.status_code}): {detalhe}")
         try:
             return {
@@ -110,3 +116,27 @@ class TikTokOAuth:
             }
         except KeyError as exc:
             raise PublisherError(f"resposta oauth sem tokens: {corpo}") from exc
+
+
+def refresh_and_store(settings: Settings | None = None, env_path: Path | None = None,
+                      client: httpx.Client | None = None) -> str:
+    """Renova o access token e grava o par novo no `.env`. Devolve o access token.
+
+    O access token do TikTok vale 24h: o do primeiro post (19/09, ~11h) ja
+    teria vencido no slot das 9h do dia seguinte. O piloto automatico chama
+    isto antes de cada publicacao. O refresh token tambem pode girar -- por
+    isso os DOIS sao gravados, e na mesma escrita atomica.
+    """
+    from agent.config import PROJECT_ROOT
+    from agent.envfile import update_env
+
+    cfg = settings or default_settings
+    tokens = TikTokOAuth(cfg, client=client).refresh()
+    novo_refresh = tokens["refresh_token"] or cfg.tiktok_refresh_token
+    update_env(env_path or PROJECT_ROOT / ".env", {
+        "AGENT_TIKTOK_ACCESS_TOKEN": tokens["access_token"],
+        "AGENT_TIKTOK_REFRESH_TOKEN": novo_refresh,
+    })
+    cfg.tiktok_access_token = tokens["access_token"]
+    cfg.tiktok_refresh_token = novo_refresh
+    return tokens["access_token"]

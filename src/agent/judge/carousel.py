@@ -1,9 +1,10 @@
-"""Juiz de carrossel: politica medido, hook/fonte/cta lidos.
+"""Juiz de carrossel: politica medido, hook/fonte/cta/fluxo lidos.
 
 O mecanico (5 slides, teto de palavras, save no 5, numero no 1, numeros
 ancorados) ja passou no roteirista de carrossel. O que sobra para leitura:
 o slide 1 abre lacuna, a progressao paga a promessa sem ir alem do dossie,
-e o fechamento pede save com motivo -- nao o slide, o ato.
+cada slide se sustenta sozinho na sequencia (fluxo), e o fechamento pede
+save com motivo -- nao o slide, o ato.
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ from agent.ports.llm import LLM, LLMError, Usage, parse_json_object
 
 MAX_TENTATIVAS = 2
 
-JULGADOS = (Criterion.hook, Criterion.fonte, Criterion.cta)
+JULGADOS = (Criterion.hook, Criterion.fonte, Criterion.fluxo, Criterion.cta)
 
 DESCRICOES: dict[Criterion, str] = {
     Criterion.hook: (
@@ -36,6 +37,15 @@ DESCRICOES: dict[Criterion, str] = {
     Criterion.fonte: (
         "Tudo que os slides afirmam esta no dossie? 2 = tudo sustentado; 1 = "
         "algum slide vai alem; 0 = afirmacao sem apoio no dossie."
+    ),
+    Criterion.fluxo: (
+        "CADA slide do meio se entende sozinho? Teste: tape o resto e leia "
+        "so o slide 3 -- da para dizer sobre O QUE ele fala? 2 = sim em "
+        "todos, e a sequencia tem arco; 1 = da para seguir com esforco; "
+        "0 = fragmento que so faz sentido colado no vizinho (ex. 'Lancado "
+        "em 2026 com a mesma ideia' -- a mesma ideia do QUE?). Nao aceite "
+        "promessa no lugar de historia: 'revelacao progressiva' com slides "
+        "que nao dizem nada sozinhos e 0, nao 1."
     ),
     Criterion.cta: (
         "O slide 5 fecha com conclusao + motivo para salvar? 2 = save com "
@@ -139,8 +149,11 @@ def _nota(criterio: Criterion, bruto: Any) -> CriterionScore:
     if isinstance(score, bool) or not isinstance(score, int) or not 0 <= score <= 2:
         raise ValueError(f"criterio {criterio.value!r} com nota invalida: {score!r}")
     motivo = " ".join(str(bruto.get("reason") or "").split())
-    return CriterionScore(criterion=criterio, score=score,
-                          reason=motivo or "o modelo nao justificou a nota")
+    if len(motivo) < 3:
+        # "ok" estoura o min_length do contrato e derrubaria o slot.
+        motivo = (f"o modelo nao justificou a nota ({motivo})" if motivo
+                  else "o modelo nao justificou a nota")
+    return CriterionScore(criterion=criterio, score=score, reason=motivo)
 
 
 def build_prompt(carrossel: Carousel, dossier: Dossier) -> str:
@@ -154,6 +167,9 @@ def build_prompt(carrossel: Carousel, dossier: Dossier) -> str:
         f"DOSSIE:\n{fatos}\n\n"
         f"CARROSSEL:\n{slides}\n\nLEGENDA: {carrossel.caption}\n\n"
         f"RUBRICA\n{rubrica}\n\n"
+        "Antes de notar o fluxo, escreva no proprio 'reason' de UMA linha "
+        "sobre o que fala cada slide 2-4, usando SO o que esta escrito nele. "
+        "Se algum nao der para resolver ('a mesma ideia' do QUE?), fluxo e 0.\n"
         "Devolva JSON com um campo por critério ('reason' + 'score'). "
         "Nao avalie politica: ja foi medida fora do seu parecer."
     )

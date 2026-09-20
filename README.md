@@ -8,12 +8,13 @@ o [MoneyPrinterTurbo](https://github.com/harry0703/MoneyPrinterTurbo) (MIT) faz 
 bem. O que não existe é a metade de cima: **descobrir o que vale a pena falar, e provar
 que o que se fala é verdade.** É essa metade que este repositório constrói.
 
-> Estado atual: **M4 (código pronto, sem post real)** — o agente vai do tema em alta
-> ao MP4 sozinho e sobe para a inbox do TikTok via Content Posting API:
-> curador escolhe, pesquisador ancora cada fato numa URL, roteirista escreve na
-> faixa de monetização, juiz aplica a rubrica de 7 critérios e devolve para
-> revisão, renderizador produz, publicador entrega na inbox. Falta o primeiro
-> post real no app (exige app registrado + OAuth). Veja [Marcos](#marcos).
+> Estado atual: **piloto automático (M6)** — quatro posts por dia (09h, 12h, 16h e 19h
+> de Brasília) sem comando manual, alternando **curto (~25s) e longo (60-90s)**: radar
+> de 8 fontes → tema e tipo de conteúdo para o
+> horário → pesquisa com fonte em cada fato → **formato escolhido pela informação**
+> (vídeo longo, curto ou carrossel, com o motivo gravado) → roteiro e juiz de família
+> diferente → render próprio (narração com pronúncia corrigida, legenda da marca,
+> trilha gerada) → inbox do TikTok. Veja [Piloto automático](#piloto-automático).
 
 ## Por que grounding com citação não é enfeite
 
@@ -49,11 +50,14 @@ Todo o caminho de produção roda sem cartão de crédito:
 
 | Camada | Implementação | Custo |
 |---|---|---|
-| Radar | Hacker News (Algolia), Google Trends RSS, Wikipedia pageviews | $0, sem chave |
-| Narração | edge-tts, vozes `pt-BR-{Thalita,Francisca,Antonio}` | $0, sem chave |
-| Legenda karaokê | tempos por palavra do próprio edge-tts (`SubMaker`) | $0 |
-| Material | Pexels / Pixabay | $0, cadastro grátis |
-| Montagem | ffmpeg | $0 |
+| Radar | Hacker News, RSS pt-BR e global, Hugging Face, Google Trends, Wikipedia | $0, sem chave |
+| LLM | rotas por estágio sobre Gemini (3.8/3.5 flash, flash-lite) e Groq (gpt-oss, qwen) | $0, free tier |
+| Narração | edge-tts, vozes `pt-BR-{Francisca,Antonio}` + dicionário de pronúncia | $0, sem chave |
+| Conferência de pronúncia | Whisper large-v3 no Groq | $0, free tier |
+| Legenda karaokê | tempos por palavra do edge-tts, ASS na fonte da marca | $0 |
+| Material | Pexels (escolhido por relevância e escuridão) | $0, cadastro grátis |
+| Trilha | sintetizada localmente (numpy), por clima do tipo de conteúdo | $0, sem direito autoral |
+| Montagem | ffmpeg (loudness −14 LUFS, ducking, cartão do gancho) | $0 |
 | Publicação | Content Posting API oficial do TikTok | $0 |
 
 O `upload-post.com` que o MoneyPrinterTurbo usa para publicar é um SaaS com free tier de
@@ -126,6 +130,42 @@ O `setup_renderer.sh` detecta e resolve sozinho: o `imageio-ffmpeg`, que já vem
 dependência do MoviePy, traz um binário estático com `libx264`, e o
 `utils.get_ffmpeg_binary()` do MPT honra `IMAGEIO_FFMPEG_EXE` antes do PATH. Nenhuma
 linha do código dele é modificada.
+
+## Piloto automático
+
+```bash
+./scripts/install_autopilot.sh                 # timers 08:25/11:25/15:25/18:25 + linger
+uv run agent autopilot-status --detail         # o dia: slots, motivos, cota, tokens
+journalctl --user -u 'seucanal-*' -f          # log ao vivo
+uv run agent slot --slot 1900 --no-publish     # um slot na mão, sem publicar
+uv run agent rerender --script <roteiro.json>  # refaz só o vídeo, sem gastar LLM
+```
+
+Cada horário é um processo próprio e idempotente (`slot_runs`, único por dia+slot):
+disparo de novo não vira post duplicado, slot com mais de 2h de atraso é pulado, e toda
+falha termina registrada com o motivo e avisada — nunca em silêncio.
+
+**Formato pela informação.** Nenhuma API pública diz o que viraliza no TikTok, então a
+escolha é explícita e auditável: nota = horário (prior declarado: manhã de consumo
+rápido, tarde salvável, noite de atenção longa) + tipo de conteúdo (tutorial e VS são
+salváveis; história e análise pedem arco) + **o que o dossiê aguenta** (medido: fato
+único com número cabe em 15s; 5 fatos com data sustentam 60–90s; itens paralelos viram
+slides) − formato já usado no dia + desempenho medido do canal quando houver amostra.
+Dossiê com menos de 3 fatos não vira longo nem carrossel — é regra, não nota.
+
+**Cota como recurso escasso.** O gemini-2.5-flash tem 20 pedidos/dia no free tier
+(medido); cada modelo é um balde próprio. O roteador tenta a rota do estágio em ordem,
+espera o `retry-after` quando o teto é por minuto, grava o esgotado até o reset quando é
+por dia, e tira por 10 min o modelo que responde 503. O juiz prefere a família diferente
+da do roteirista.
+
+**Pronúncia.** A voz pt-BR lia "Gemini" como "Zemini". O texto da voz recebe grafia
+fonética ("Djémini") e a legenda mantém a original, com o tempo alinhado palavra a
+palavra; o Whisper transcreve cada narração e acusa nome próprio que não reconheceu.
+
+**Limites de plataforma:** o vídeo chega à inbox e é concluído no app (postar direto
+exige auditoria do app); o carrossel só sobe por API a partir de domínio verificado, então
+sai como pacote pronto para postar.
 
 ## O radar
 
@@ -444,6 +484,15 @@ e CTA próprios; legenda com as 5 hashtags `#ia #inteligenciaartificial
 #tecnologia #ai #seucanal`. Slides e avatar saem da paleta com Space
 Grotesk/Plex Mono (`brand/assets/`).
 
+O slide do carrossel distribui o conteúdo em cinco camadas, desenho que veio de
+uma referência de 20/09/2026: chip da marca + contador no topo, banho de acento
+na diagonal sobre a foto, título grande com a **última linha (ou a última
+palavra) no acento**, apoio marcado por um quadrado, e rodapé com régua, arroba
+e a ação (deslizar, ou salvar no último). O layout anterior era honesto e
+vazio: contador solto, título e apoio no mesmo peso, um terço do quadro sem
+nada. O banho **só entra com foto** — sobre o quase-preto puro ele vira
+dominante verde no quadro inteiro, e aí a regra da marca já foi embora.
+
 Narração pt-BR em CPU com Piper/VITS (`agent voice-*`): 176 palavras em ~5s
 (RTF ~0,05–0,1 medido em i5 sem GPU). Biblioteca em `agent/voice/library.py`,
 modelos em `data/voices/` (git-ignored), amostras em `output/vozes/`.
@@ -468,6 +517,78 @@ aberto reproduz; variedade = troca de locutor). Estilos (`documental`,
 
 ## Estúdio de vozes (TTS local, $0)
 
+## Apresentador animado (Íris e Théo, $0)
+
+Os pilares de análise, tutorial, fato, VS e notícia abrem com um apresentador
+do elenco da marca. Não é um retrato colado no canto: a silhueta inteira
+aparece e **ela fala**, sintetizada quadro a quadro em
+`agent/render/presenter.py`, sem nenhum modelo e sem nenhuma chamada de API.
+
+Quatro camadas de movimento, todas determinísticas:
+
+| Camada | De onde sai | Como se mede |
+|---|---|---|
+| **Boca** | envoltória RMS da narração, ataque 25 ms / relaxamento 55 ms | perfil de deslocamento do maxilar ancorado nos pontos do rosto; abertura desenhada entre os lábios |
+| **Piscada** | sorteio com semente fixa (o tema), 2,6–6 s | pálpebra comprimindo a faixa sobrancelha→cílio |
+| **Cabeça** | balanço lento + acento nas sílabas fortes | duas camadas de máscara **complementar** (cabeça + tronco = alfa original), pivô dentro do peito |
+| **Encenação** | tempo de palavra do TTS | grande na chamada → canto durante o corpo → volta no fechamento |
+
+O recorte e os pontos do rosto são gerados **uma vez**, fora do laço:
+
+```bash
+uv run --no-project --with rembg --with mediapipe --with pillow --with numpy \
+    python scripts/make_presenter_cutouts.py
+```
+
+Isso lê `brand/assets/presenters/source/<id>.jpg` e grava `<id>.png` (RGBA,
+busto com degradê na base) + `<id>.json` (olhos, base do nariz, boca, queixo,
+pescoço, pivô). `rembg` e `mediapipe` somam mais de 400 MB com onnxruntime e
+opencv atrás — o agente roda três vezes por dia e nunca precisa disso, então
+eles ficam num ambiente efêmero do `uv` e o repositório continua leve. Mesma
+decisão do `sentence-transformers`.
+
+Para olhar o artefato sem gastar um slot nem uma rodada de LLM:
+
+```bash
+uv run agent presenter-preview --script fixtures/roteiro_manual.json --presenter iris
+# apresentador.mp4 + folha.png (chamada, travessia, corpo, fechamento)
+```
+
+Medido em 20/09/2026 num i5 sem GPU: 40 ms por quadro na chamada (avatar a 51%
+da altura) e 22 ms no canto, ~46 s de síntese para um vídeo de 67 s, camada de
+5–9 MB. O custo é por pixel de **saída**, por isso cada camada só carrega o
+retângulo em que tem tinta — recortar assim tirou 40% do tempo de cada quadro.
+
+### Armadilhas pagas aqui
+
+- **Janela de `crop` não anima ninguém.** O primeiro desenho passeava um
+  retângulo de 340x640 sobre o PNG: o recorte alfa não servia para nada, o que
+  aparecia era uma caixa de rosto, e a pessoa dentro dela ficava imóvel. O
+  teste `test_o_quadro_nao_e_um_retangulo` tranca isso medindo a silhueta
+  (testa estreita, ombro largo, cantos vazios).
+- **O recorte precisa do busto inteiro.** O `rembg` cortava o assunto nas
+  bordas da imagem de origem. Agora o busto é cortado *acima* de onde o ombro
+  encosta na borda e a última faixa vira transparente por degradê.
+- **O lábio de cima não se mexe.** Rampa do subnasal ao queixo fazia o lábio
+  inferior descer um terço do que devia e a boca virava um risco. O
+  deslocamento sobe de zero a cheio logo abaixo da linha dos lábios — e esse
+  trecho esticado *é* a boca abrindo.
+- **Normalizar pelo p92 deixa a boca escancarada.** Medido na narração real de
+  67 s: mediana de abertura 0,68. Descontando o piso de ruído (p20) e puxando o
+  meio para baixo (gama 1,3), a mediana cai para 0,37, com 31% dos quadros de
+  boca quase fechada — que é como fala de verdade se distribui.
+- **O VP9 com alfa deste ffmpeg devolve o alfa opaco.** Testado antes de
+  escolher. RGBA sem perda em `qtrle` dá 1569 MB para 67 s; a camada sai em
+  **duas trilhas h264** (cor pré-multiplicada + máscara em cinza) com 8,7 MB, e
+  o composto final difere em média 0,7 de 255 por pixel. Pré-multiplicada
+  porque, com alfa direto, a cor salta do rosto para o preto na borda e o h264
+  borra esse salto em franja escura.
+- **`presenter_for(pilar)` com o objeto no lugar do id devolve `None`.** O
+  runner reatribuía `pilar` para o `ContentPillar` e passava o objeto para
+  `presenter_for` e `accent_for`: as duas caíam no padrão **em silêncio**.
+  Nenhum apresentador entrava em vídeo nenhum, e todo vídeo saía no verde
+  mesmo nos pilares de acento ciano. Travado em `TestApresentadorNoSlot`.
+
 ## Marcos
 
 | | Marco | Estado |
@@ -478,6 +599,8 @@ aberto reproduz; variedade = troca de locutor). Estilos (`documental`,
 | M3 | Pesquisador + roteirista + juiz com rubrica | **concluído** |
 | M4 | Publicador (TikTok, inbox, rótulo AIGC) | **piloto real em 19/09/2026** — MP4 69s na inbox (`SEND_TO_USER_INBOX`, concluído no app); falta aprovação do app em produção |
 | M5 | Eval: free tier x free tier na mesma rubrica + métricas do post | **em andamento** — `agent eval` (offline) e `agent metrics-record` prontos; 1ª rodada real abaixo |
+| M6 | Piloto automático: 3 slots/dia, formato pela informação, roteador de cota, render próprio | **ligado em 19/09/2026** — systemd de usuário; carrossel ainda postado a mão |
+| M7 | OpenRouter na frente da rota, degrau pago por tarefa, apresentador animado, carrossel com hierarquia | **em andamento (20/09/2026)** — ~$0,01/vídeo medido; presenter sintetizado quadro a quadro ($0); falta domínio verificado para publicar carrossel pela API |
 
 ## Eval (M5) — primeiros números
 

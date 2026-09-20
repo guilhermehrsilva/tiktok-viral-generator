@@ -68,6 +68,21 @@ PILLARS: dict[str, Pillar] = {
             "minimalist tech laboratory",
         ),
     ),
+    # Adicionado em 19/09/2026: o primeiro video de ciencia do piloto (Marte)
+    # saiu com androides e olho bionico, porque nenhum dos quatro pilares de
+    # tech tinha estetica de ciencia e espaco. Mesma regra: escuro, filmavel.
+    "E": Pillar(
+        id="E",
+        nome="Ciencia e Espaco (Cosmos / Lab)",
+        tags=(
+            "galaxy stars timelapse",
+            "nebula deep space",
+            "planet surface orbit",
+            "telescope observatory night",
+            "microscope laboratory dark",
+            "dna double helix",
+        ),
+    ),
 }
 
 def normalize(term: str) -> str:
@@ -120,6 +135,13 @@ def validate_terms(terms: list[str]) -> list[str]:
 # Palavras do tema (pt e en) que puxam cada pilar. Ordem importa: A antes de B
 # antes de C; o que nao casar cai no D, que e o pilar generico do canal.
 _PALAVRAS: dict[str, tuple[str, ...]] = {
+    "E": ("marte", "mars", "espaco", "espaço", "space", "nasa", "esa ", "planeta",
+          "planet", "galaxia", "galáxia", "galaxy", "estrela", "telescopio",
+          "telescópio", "telescope", "astronom", "cosmos", "universo", "universe",
+          " lua", "moon", "satelite", "satélite", "orbita", "órbita", "sonda",
+          "foguete", "rocket", "cerebro", "cérebro", "brain", "dna", "celula",
+          "célula", "genoma", "fisica", "física", "quimica", "química", "biolog",
+          "neurocien", "cientistas", "scientists", "fossil", "fóssil", "vulcao"),
     "A": ("robo", "robô", "robot", "android", "humanoide", "humanoid",
           "consciencia", "consciência", "consciousness", "sentient",
           "bionic", "biônic", "cyborg", "ciborgue"),
@@ -138,11 +160,50 @@ _PILAR_SUGERIDO_POR_OMISSAO = "D"
 
 def suggest_pillar(topic: str) -> str:
     """Pilar sugerido pelo assunto. Orientacao, nao decisao: o modelo escolhe."""
-    baixo = topic.lower()
-    for pid in ("A", "B", "C"):
+    baixo = f" {topic.lower()} "
+    # Robo antes de ciencia ("robo em Marte" e robo); ciencia antes de dados.
+    for pid in ("A", "E", "B", "C"):
         if any(p in baixo for p in _PALAVRAS[pid]):
             return pid
     return _PILAR_SUGERIDO_POR_OMISSAO
+
+
+# Conceito nao e cena: o Pexels devolve qualquer coisa para "innovation". O
+# b-roll do assunto precisa ser objeto ou lugar filmavel.
+_ABSTRATOS = frozenset("""
+innovation innovative future futuristic technology tech concept success idea ideas
+growth business progress digital transformation disruption intelligence artificial ai
+data information knowledge change revolution power potential solution strategy
+""".split())
+
+MAX_BROLL = {"long": 2, "short": 1, "carousel": 2}
+
+
+def validate_broll(terms: list[str], mode: str = "long") -> list[str]:
+    """B-roll do assunto: ate N termos EM INGLES de objeto/lugar filmavel.
+
+    Existe porque a identidade sozinha nao correlaciona: o short do cerebro
+    (19/09) saiu com "futuristic clean UI" e uma mao segurando celular em fundo
+    bege -- nada a ver com cerebro, e fora da marca. O pilar continua dando a
+    assinatura; o b-roll poe na tela a coisa de que o video fala.
+    """
+    problemas: list[str] = []
+    teto = MAX_BROLL.get(mode, 2)
+    if len(terms) > teto:
+        problemas.append(f"broll tem {len(terms)} termos; o modo {mode} aceita ate {teto}.")
+    for t in terms:
+        palavras = t.lower().split()
+        if not t.isascii():
+            problemas.append(f"broll {t!r} nao e ASCII: o Pexels espera ingles.")
+        elif not 1 <= len(palavras) <= 5:
+            problemas.append(f"broll {t!r} precisa ter de 1 a 5 palavras.")
+        elif normalize(t) in _TAG_TO_PILLAR:
+            problemas.append(f"broll {t!r} e tag de pilar: ela vai em search_terms, "
+                             "o broll e o objeto concreto do assunto.")
+        elif all(p in _ABSTRATOS for p in palavras):
+            problemas.append(f"broll {t!r} e conceito, nao cena: use um objeto ou "
+                             "lugar filmavel ('graphics card', 'human brain model').")
+    return problemas
 
 
 def brief(pilar_sugerido: str) -> str:
@@ -162,12 +223,38 @@ def brief(pilar_sugerido: str) -> str:
     )
 
 
+def compact_brief(pilar_sugerido: str, mode: str = "long") -> str:
+    """ESTETICA em uma linha por pilar + a regra do b-roll do assunto.
+
+    Mesma informacao do `brief`, com metade dos tokens: vai em TODA chamada
+    do roteirista, e no free tier token de prompt e cota.
+    """
+    linhas = []
+    for pid, p in PILLARS.items():
+        marca = " (sugerido)" if pid == pilar_sugerido else ""
+        linhas.append(f"  {pid}{marca}: " + " | ".join(p.tags))
+    teto = MAX_BROLL.get(mode, 2)
+    return (
+        "ESTETICA (identidade visual fixa)\n"
+        "- search_terms: tags COPIADAS letra por letra de UM unico pilar -- o sugerido, "
+        "salvo se outro combinar claramente melhor com o assunto --, na ordem "
+        "cronologica da narracao (termo fora da lista reprova):\n"
+        + "\n".join(linhas) + "\n"
+        f"- broll: 0 a {teto} termos EM INGLES do assunto concreto, objeto ou lugar "
+        "filmavel que a narracao cita ('graphics card', 'human brain model', "
+        "'smartphone screen'); o primeiro abre o video. Nada de conceito abstrato."
+    )
+
+
 __all__ = [
+    "MAX_BROLL",
     "PILLARS",
     "Pillar",
     "brief",
+    "compact_brief",
     "normalize",
     "pillar_of",
     "suggest_pillar",
+    "validate_broll",
     "validate_terms",
 ]

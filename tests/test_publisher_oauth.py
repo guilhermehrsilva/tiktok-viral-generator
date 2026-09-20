@@ -90,3 +90,52 @@ class TestExchange:
         oauth = _oauth({"error": {"message": "code expirado"}}, status=400)
         with pytest.raises(PublisherAuthError, match="400"):
             oauth.exchange_code("codigo-velho")
+
+
+class TestRenovacaoAutomatica:
+    """O token vale 24h: o piloto renova antes de cada post e grava no .env."""
+
+    def test_renova_e_grava_os_dois_tokens_no_env(self, tmp_path):
+        import httpx
+
+        from agent.adapters.tiktok_oauth import refresh_and_store
+        from agent.config import Settings
+
+        env = tmp_path / ".env"
+        env.write_text("# comentario\nAGENT_TIKTOK_ACCESS_TOKEN=velho\n"
+                       "AGENT_TIKTOK_REFRESH_TOKEN=rt-velho\nOUTRA=1\n", encoding="utf-8")
+        cfg = Settings(_env_file=None, tiktok_client_key="ck", tiktok_client_secret="cs",
+                       tiktok_refresh_token="rt-velho", tiktok_access_token="velho")
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert b"grant_type=refresh_token" in request.content
+            assert b"refresh_token=rt-velho" in request.content
+            return httpx.Response(200, json={
+                "access_token": "act-novo", "refresh_token": "rt-novo",
+                "open_id": "u", "expires_in": 86400})
+
+        cliente = httpx.Client(base_url="https://open.tiktokapis.com",
+                               transport=httpx.MockTransport(handler))
+        assert refresh_and_store(cfg, env, client=cliente) == "act-novo"
+        texto = env.read_text(encoding="utf-8")
+        assert "AGENT_TIKTOK_ACCESS_TOKEN=act-novo" in texto
+        assert "AGENT_TIKTOK_REFRESH_TOKEN=rt-novo" in texto
+        assert "# comentario" in texto and "OUTRA=1" in texto
+        assert cfg.tiktok_access_token == "act-novo"
+        assert (env.stat().st_mode & 0o777) == 0o600
+
+    def test_erro_em_string_vira_motivo_legivel(self):
+        import httpx
+        import pytest
+
+        from agent.adapters.tiktok_oauth import TikTokOAuth
+        from agent.config import Settings
+        from agent.ports.publisher import PublisherAuthError
+
+        cfg = Settings(_env_file=None, tiktok_client_key="ck", tiktok_client_secret="cs")
+        cliente = httpx.Client(base_url="https://open.tiktokapis.com",
+                               transport=httpx.MockTransport(lambda r: httpx.Response(
+                                   400, json={"error": "invalid_grant",
+                                              "error_description": "refresh expirado"})))
+        with pytest.raises(PublisherAuthError, match="invalid_grant refresh expirado"):
+            TikTokOAuth(cfg, client=cliente).refresh("rt")

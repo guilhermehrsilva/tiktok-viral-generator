@@ -11,14 +11,24 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field, HttpUrl, field_validator, model_validator
 
-# Ritmo de fala medido para narracao pt-BR em video curto. Usado apenas para
-# estimativa antes do TTS; a duracao real vem do renderizador.
-WORDS_PER_SECOND = 2.5
+# Ritmo de fala da narracao pt-BR. Usado apenas para estimativa antes do TTS;
+# a duracao real vem do renderizador. Medido em 20/09/2026 nas vozes do
+# renderizador proprio (Francisca -4%, Antonio +4%): 2,57 palavras/s nas duas.
+WORDS_PER_SECOND = 2.57
 
 # Faixa exigida pelo Creator Rewards: video abaixo de 60s nao e elegivel a
 # monetizacao, e acima de ~90s a retencao cai sem ganho de receita.
 MIN_DURATION_S = 60
 MAX_DURATION_S = 90
+
+# Faixa do curto. Mora aqui, junto com a do longo, porque estava escrita em
+# DOIS lugares -- a faixa de palavras no `writer` e a de segundos no `judge`
+# (`(10, 20)`, cravado). Quando a grade de 20/09/2026 pediu curto de 25s, so
+# uma das duas foi atualizada e o juiz passou a reprovar todo curto que o
+# roteirista aprovava, com a mensagem generica "nenhum formato aprovado pelo
+# juiz". Duas constantes para o mesmo fato sempre divergem; agora e uma.
+SHORT_MIN_DURATION_S = 22
+SHORT_MAX_DURATION_S = 28
 
 
 class Fact(BaseModel):
@@ -73,6 +83,25 @@ class Script(BaseModel):
     facts: list[Fact] = Field(default_factory=list)
     # long = 60-90s (monetiza), short = ~15s (alcance, nao monetiza).
     format: str = "long"
+    # B-roll do ASSUNTO (objeto/lugar filmavel, em ingles): o que correlaciona
+    # a imagem com a fala. `search_terms` e a assinatura do canal; `broll` e
+    # a coisa de que o video fala. Vazio em roteiro antigo -- continua valido.
+    broll: list[str] = Field(default_factory=list, max_length=3)
+    # Tipo de conteudo (pilar da marca) com que foi escrito: news, fato,
+    # analise, tutorial, futuro, vs, historia. Vazio em roteiro antigo.
+    pillar: str = ""
+    # Legenda do post (guia da marca: gancho escrito SEM repetir o audio + uma
+    # frase de contexto). Vazio em roteiro antigo: a legenda cai no hook.
+    caption: str = ""
+
+    @field_validator("broll")
+    @classmethod
+    def _broll_em_ascii(cls, v: list[str]) -> list[str]:
+        limpos = [" ".join(t.split()) for t in v if t and t.strip()]
+        for termo in limpos:
+            if not termo.isascii():
+                raise ValueError(f"broll {termo!r} nao e ASCII; o Pexels espera ingles")
+        return limpos
 
     @field_validator("search_terms")
     @classmethod
@@ -116,11 +145,14 @@ class Script(BaseModel):
 
 
 class Criterion(StrEnum):
-    """Os sete critérios da rubrica do juiz.
+    """Os critérios das rubricas do juiz.
 
     Sao StrEnum e nao string livre porque a rubrica e um contrato: o eval do M5
     compara provedores criterio a criterio, e nota gravada com o nome do
     criterio escrito de duas formas nao se agrega.
+
+    `fluxo` e so do carrossel (fio narrativo entre slides); o video usa os
+    outros sete.
     """
 
     hook = "hook"
@@ -130,11 +162,13 @@ class Criterion(StrEnum):
     politica = "politica"
     pt_br = "pt_br"
     cta = "cta"
+    fluxo = "fluxo"
 
 
-# Corte da rubrica: 7 critérios, 0 a 2 cada.
+# Corte da rubrica do video: 7 critérios, 0 a 2 cada. Literal, nao derivado
+# do tamanho do enum: `fluxo` e criterio de carrossel e nao entra aqui.
 RUBRIC_CUTOFF = 11
-RUBRIC_MAX = 2 * len(Criterion)
+RUBRIC_MAX = 14
 
 # Critérios que reprovam por exigência, e não por qualidade -- nota alta nos
 # outros nao compra aprovacao aqui. Fonte e duracao sao requisito do Creator
@@ -181,7 +215,9 @@ class Review(BaseModel):
         vistos = [s.criterion for s in self.scores]
         if len(vistos) != len(set(vistos)):
             raise ValueError("rubrica com criterio repetido")
-        faltando = set(Criterion) - set(vistos)
+        # A rubrica do video tem 7 criterios; `fluxo` e so do carrossel
+        # (nao importar JULGADOS do juiz aqui: models nao depende de judge).
+        faltando = set(Criterion) - {Criterion.fluxo} - set(vistos)
         if faltando:
             raise ValueError(
                 "parecer incompleto, falta: "
@@ -288,6 +324,9 @@ class Carousel(BaseModel):
     caption: str = Field(min_length=10)
     facts: list[Fact] = Field(default_factory=list)
     format: str = "carousel"
+    # Foto do assunto para a capa (slide 1) e o miolo (slide 3), em ingles.
+    broll: list[str] = Field(default_factory=list, max_length=3)
+    pillar: str = ""
 
     @model_validator(mode="after")
     def _ordem(self) -> Carousel:
@@ -296,16 +335,17 @@ class Carousel(BaseModel):
         return self
 
 
-CAROUSEL_CUTOFF = 6
-CAROUSEL_MAX = 8
+CAROUSEL_CUTOFF = 8
+CAROUSEL_MAX = 10
 
 
 class CarouselReview(BaseModel):
-    """Parecer do carrossel: politica medido, 3 critérios lidos.
+    """Parecer do carrossel: politica medido, 4 critérios lidos.
 
-    Corte em 6/8, nenhum critério zerado, politica sem veto. O resto do
-    mecanico (5 slides, 15 palavras, save no 5, numero no 1) ja passou no
-    roteirista -- mandar isso ao juiz gastaria cota para conferir `len().
+    Corte em 8/10 (folga de 2 pontos, como no 6/8 anterior), nenhum critério
+    zerado, politica sem veto. O resto do mecanico (5 slides, 15 palavras,
+    save no 5, numero no 1) ja passou no roteirista -- mandar isso ao juiz
+    gastaria cota para conferir `len().
     """
 
     topic: str

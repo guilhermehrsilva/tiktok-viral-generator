@@ -60,7 +60,10 @@ class GoogleTrends:
         sinais: list[Signal] = []
         for item in canal.findall("item"):
             termo = (item.findtext("title") or "").strip()
-            if not termo:
+            # O feed tambem tem tema de uma letra ("p", visto em 19/09/2026):
+            # estoura o min_length do Signal e derrubava a fonte inteira -- o
+            # mesmo defeito que a Wikipedia teve com o artigo "Q".
+            if len(termo) < 2:
                 continue
 
             materias = []

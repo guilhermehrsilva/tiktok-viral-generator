@@ -39,6 +39,7 @@ from agent.ports.llm import LLM, LLMError, Usage, parse_json_object
 from agent.research import grounding, sources
 from agent.research.fetch import Page, PageFetcher, PageUnavailable
 from agent.research.sources import Candidate
+from agent.text import tokens
 
 SISTEMA = (
     "Voce e pesquisador de um canal de tech, IA e ciencia. Sua unica funcao e "
@@ -78,6 +79,10 @@ _ESPACOS = re.compile(r"\s+")
 MIN_TRECHO = 25
 MAX_TRECHO = 400
 
+# Caracteres da pagina que vao ao modelo depois do foco no tema (~1,2K
+# tokens). A pagina lida continua com `research_page_chars` para o portao.
+FOCO_CHARS = 5000
+
 
 @dataclass
 class Discarded:
@@ -105,6 +110,8 @@ class ResearchReport:
     usage: Usage = field(default_factory=Usage)
     latency_s: float = 0.0
     model: str = ""
+    # `provedor:modelo` que respondeu por ultimo quando o LLM e roteado.
+    route: str = ""
 
     @property
     def facts(self) -> list[Fact]:
@@ -136,8 +143,16 @@ class Researcher:
         self._max_facts = max_facts_per_source
 
     def research(
-        self, decision: Decision, candidates: list[Candidate] | None = None
+        self, decision: Decision, candidates: list[Candidate] | None = None,
+        target_facts: int | None = None,
     ) -> ResearchReport:
+        """Le as fontes em ordem e extrai fatos, uma chamada por fonte.
+
+        `target_facts`: para de ler quando ja ha fatos suficientes de pelo
+        menos duas fontes (ou dois a mais que o alvo de uma fonte so). Cada
+        fonte e uma chamada de modelo; ler a quinta pagina quando as tres
+        primeiras ja deram seis fatos e cota gasta sem ganho de roteiro.
+        """
         report = ResearchReport(topic=decision.term, model=getattr(self._llm, "model", ""))
 
         if candidates is None:
@@ -182,6 +197,9 @@ class Researcher:
             report.discarded.extend(descartados)
             report.usage = report.usage + uso
             report.latency_s = round(report.latency_s + latencia, 3)
+
+            if target_facts and _suficiente(fatos, target_facts):
+                break
 
         if fatos:
             report.dossier = Dossier(
@@ -265,6 +283,53 @@ class Researcher:
         return fatos, descartados, resposta.usage, resposta.latency_s
 
 
+def _suficiente(fatos: list[Fact], alvo: int) -> bool:
+    dominios = {_dominio(str(f.source_url)) for f in fatos}
+    return (len(fatos) >= alvo and len(dominios) >= 2) or len(fatos) >= alvo + 2
+
+
+def focus(texto: str, topic: str, limite: int) -> str:
+    """Os paragrafos que falam do tema, em ordem, ate `limite` caracteres.
+
+    A pagina ja chega cortada em `research_page_chars`, mas o corte era
+    cego: os primeiros 8 mil caracteres de uma materia incluem legenda de
+    foto, "leia tambem" e o paragrafo sobre outro produto. Manter o lide e
+    os paragrafos com termos do tema (e os com numero, que e o que vira
+    fato) corta token de entrada sem cortar o fato. O portao de trecho
+    continua conferindo contra a pagina INTEIRA.
+    """
+    if len(texto) <= limite:
+        return texto
+    termos = {t for t in tokens(topic) if len(t) >= 3 or any(c.isdigit() for c in t)}
+    paragrafos = [p.strip() for p in re.split(r"\n{2,}|\n", texto) if p.strip()]
+    if not paragrafos:
+        return texto[:limite]
+    notas = []
+    for i, par in enumerate(paragrafos):
+        normal = " " + " ".join(tokens(par, drop_stopwords=False)) + " "
+        nota = sum(1 for t in termos if f" {t} " in normal)
+        nota += 0.5 if re.search(r"\d", par) else 0.0
+        notas.append((i, nota))
+    escolhidos = {0}
+    total = len(paragrafos[0])
+    for i, nota in sorted(notas, key=lambda x: (-x[1], x[0])):
+        if nota <= 0 or i in escolhidos:
+            continue
+        if total + len(paragrafos[i]) > limite:
+            continue
+        escolhidos.add(i)
+        total += len(paragrafos[i])
+    # Pouco texto casou (pagina que fala do tema com outras palavras): completa
+    # na ordem da pagina, que e melhor que mandar so o lide.
+    for i in range(len(paragrafos)):
+        if total >= limite * 0.6:
+            break
+        if i not in escolhidos and total + len(paragrafos[i]) <= limite:
+            escolhidos.add(i)
+            total += len(paragrafos[i])
+    return "\n\n".join(paragrafos[i] for i in sorted(escolhidos))
+
+
 def _reprovar(claim: str, quote: str, palheiro: str) -> str:
     """Motivo pelo qual o fato nao entra, ou string vazia se ele passa."""
     if len(quote) < MIN_TRECHO:
@@ -287,7 +352,7 @@ def build_prompt(page: Page, topic: str, max_facts: int) -> str:
         f"TEMA EM APURACAO: {topic}\n\n"
         f"FONTE: {page.source_name} — {page.title or 'sem titulo'}\n"
         "TEXTO DA FONTE (delimitado por <<< >>>):\n"
-        f"<<<\n{page.text}\n>>>\n\n"
+        f"<<<\n{focus(page.text, topic, FOCO_CHARS)}\n>>>\n\n"
         "TAREFA\n"
         f"Extraia no maximo {max_facts} afirmacoes factuais deste texto sobre o tema.\n"
         "Para cada afirmacao, devolva dois campos:\n"

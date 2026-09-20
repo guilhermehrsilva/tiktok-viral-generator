@@ -108,6 +108,7 @@ def produce(
     judge: Judge,
     max_revisions: int = MAX_REVISOES,
     mode: str = "long",
+    pillar: str = "",
 ) -> ProductionReport:
     report = ProductionReport(topic=dossier.topic)
     notas: list[str] = []
@@ -117,7 +118,9 @@ def produce(
         report.rounds.append(rodada)
 
         try:
-            rodada.write = writer.write(dossier, mode=mode, notes=notas or None)
+            rodada.write = writer.write(
+                dossier, mode=mode, notes=notas or None, pillar=pillar,
+                previous=_narracao(report) if notas else "")
         except LLMError as exc:
             # Cota ou instabilidade. O laco termina aqui, mas registrando o
             # estagio e mantendo o custo ja gasto no relatorio -- sob restricao de
@@ -213,22 +216,28 @@ def produce_carousel(
     dossier: Dossier,
     llm: LLM,
     max_revisions: int = MAX_REVISOES,
+    judge_llm: LLM | None = None,
+    pillar: str = "",
 ) -> CarouselProductionReport:
-    """Escreve, julga e revisa o carrossel ate passar (corte 6/8)."""
+    """Escreve, julga e revisa o carrossel ate passar (corte 8/10).
+
+    `judge_llm` separado permite juiz de outra familia (o roteador poe o
+    provedor diferente do escritor na frente); sem ele, o mesmo modelo julga.
+    """
     report = CarouselProductionReport(topic=dossier.topic)
     notas: list[str] = []
     for _ in range(max_revisions + 1):
         rodada = CarouselRound(notes_in=list(notas))
         report.rounds.append(rodada)
         try:
-            rodada.write = write_carousel(dossier, llm, notes=notas or None)
+            rodada.write = write_carousel(dossier, llm, notes=notas or None, pillar=pillar)
         except LLMError as exc:
             rodada.failure = f"roteirista: {type(exc).__name__}: {exc}"
             return report
         if rodada.write.carousel is None:
             return report
         try:
-            rodada.review = judge_carousel(rodada.write.carousel, dossier, llm)
+            rodada.review = judge_carousel(rodada.write.carousel, dossier, judge_llm or llm)
         except LLMError as exc:
             rodada.failure = f"juiz: {type(exc).__name__}: {exc}"
             return report
@@ -237,3 +246,12 @@ def produce_carousel(
         notas = (rodada.review.review.revision_notes
                  if rodada.review.review is not None else [])
     return report
+
+
+def _narracao(report: ProductionReport) -> str:
+    """Narracao do ultimo roteiro escrito, para a revisao ajustar e nao recomecar."""
+    for r in reversed(report.rounds):
+        if r.write is not None and r.write.script is not None:
+            return r.write.script.narration
+    return ""
+

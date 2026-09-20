@@ -57,8 +57,14 @@ class MptRenderer:
 
     # ---------------------------------------------------------------- render
 
-    def build_payload(self, script: Script) -> dict[str, Any]:
-        """Monta o VideoParams do MPT. Separado de `render` para ser testavel."""
+    def build_payload(self, script: Script, materials: list[str] | None = None,
+                      voice: str | None = None) -> dict[str, Any]:
+        """Monta o VideoParams do MPT. Separado de `render` para ser testavel.
+
+        `materials`: nomes de arquivos ja enviados ao renderizador, na ordem
+        da narracao (escolhidos por `render/footage.py`). Com eles o MPT nao
+        busca nada: so corta 5s de cada um, em sequencia.
+        """
         payload: dict[str, Any] = {
             # Roteiro e termos prontos: o LLM do MPT nao e acionado.
             "video_subject": script.topic,
@@ -72,7 +78,7 @@ class MptRenderer:
             # Casa cada termo com o trecho correspondente da narracao, em vez de
             # sortear material. Os termos vao em ordem cronologica por contrato.
             "match_materials_to_script": True,
-            "voice_name": self.settings.voice_name,
+            "voice_name": voice or self.settings.voice_name,
             "voice_rate": 1.0,
             "voice_volume": 1.0,
             # Legenda karaoke: os tempos por palavra vem do SubMaker do edge-tts,
@@ -81,14 +87,28 @@ class MptRenderer:
             "subtitle_display_mode": "word_by_word",
             "subtitle_animation": "pop_spring",
             "subtitle_position": self.settings.subtitle_position,
+            "custom_position": self.settings.subtitle_custom_position,
             "font_name": self.settings.font_name,
             "font_size": self.settings.font_size,
             "text_fore_color": "#FFFFFF",
             "stroke_color": "#000000",
-            "stroke_width": 2.0,
-            "bgm_type": "random",
-            "bgm_volume": 0.12,
+            "stroke_width": self.settings.subtitle_stroke_width,
+            # Trilha desligada no MPT. As musicas de `resource/songs` vieram de
+            # videos do YouTube ("If there are copyright issues, please delete
+            # them", no README deles): canal monetizado nao usa audio sem
+            # licenca. A trilha entra depois, gerada localmente
+            # (`render/music.py`), na pos-producao.
+            "bgm_type": "",
+            "bgm_volume": 0.0,
         }
+
+        if materials:
+            payload["video_source"] = "local"
+            payload["video_materials"] = [
+                {"provider": "local", "url": nome, "duration": 0} for nome in materials
+            ]
+            payload["video_concat_mode"] = "sequential"
+            return payload
 
         if self.settings.video_source == "local":
             # get_video_materials do MPT so olha video_materials nesse modo;
@@ -102,14 +122,14 @@ class MptRenderer:
 
         return payload
 
-    def _upload_local_materials(self) -> list[str]:
+    def _upload_local_materials(self, paths: list[Path] | None = None) -> list[str]:
         """Sobe os arquivos locais e devolve os nomes armazenados pelo renderizador.
 
         Vai por HTTP em vez de copiar para o disco dele de proposito: e o que
         mantem a porta valida se o renderizador sair desta maquina.
         """
         nomes: list[str] = []
-        for caminho in self.settings.local_materials:
+        for caminho in (paths if paths is not None else self.settings.local_materials):
             path = Path(caminho)
             if not path.is_file():
                 raise RendererError(f"material local inexistente: {path}")
@@ -132,8 +152,10 @@ class MptRenderer:
             nomes.append(str(nome))
         return nomes
 
-    def render(self, script: Script) -> RenderResult:
-        task_id = self._create_task(script)
+    def render(self, script: Script, materials: list[Path] | None = None,
+               voice: str | None = None) -> RenderResult:
+        nomes = self._upload_local_materials(materials) if materials else None
+        task_id = self._create_task(script, nomes, voice)
         task = self._await_task(task_id)
 
         state = task.get("state")
@@ -166,9 +188,11 @@ class MptRenderer:
 
     # ------------------------------------------------------------- internos
 
-    def _create_task(self, script: Script) -> str:
+    def _create_task(self, script: Script, materials: list[str] | None = None,
+                     voice: str | None = None) -> str:
         try:
-            r = self._client.post(f"{API}/videos", json=self.build_payload(script))
+            r = self._client.post(f"{API}/videos",
+                                  json=self.build_payload(script, materials, voice))
         except httpx.HTTPError as exc:
             raise RendererError(
                 f"renderizador inacessivel em {self._client.base_url}: {exc}"

@@ -11,6 +11,8 @@ __pycache__/
 
 # Segredos e configuracao local
 .env
+.env.*
+data/.env*
 config.local.toml
 
 # Artefatos de execucao
@@ -18,6 +20,15 @@ storage/
 data/*.db
 data/*.db-journal
 data/voices/
+# Gerados pelo piloto: cache de clipes/fotos, fonte instanciada, logs, audio.
+data/footage-cache/
+data/photos-cache/
+data/fonts/
+data/logs/
+data/tts/
+# Malha de rosto do MediaPipe, baixada por scripts/make_presenter_cutouts.py.
+# E artefato externo e o script rebaixa sozinho: nao entra no repo.
+data/models/
 *.mp4
 *.mp3
 *.srt

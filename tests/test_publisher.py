@@ -196,3 +196,71 @@ class TestCota:
         pub.fetch_status("pid", access_token="tok")
         # time_fn congelado em 0: a setima chamada dorme a janela inteira.
         assert pub._sleep is not None
+
+
+class TestCarrosselPorUrl:
+    """Foto so entra por PULL_FROM_URL; titulo e descricao vao pela API."""
+
+    def test_payload_de_foto_para_a_inbox(self):
+        p = TikTokPublisher.build_photo_payload(
+            ["https://u.github.io/r/1.jpg", "https://u.github.io/r/2.jpg"],
+            "t" * 200, "legenda #ia")
+        assert p["post_mode"] == "MEDIA_UPLOAD" and p["media_type"] == "PHOTO"
+        assert p["source_info"]["source"] == "PULL_FROM_URL"
+        assert p["source_info"]["photo_images"][0].endswith("1.jpg")
+        assert len(p["post_info"]["title"]) == 90
+
+    def test_upload_de_fotos_devolve_publish_id(self):
+        from agent.adapters.tiktok_publisher import PHOTO_INIT_PATH
+        pub, chamadas, _ = _publicador([
+            (200, {"data": {"publish_id": "p_pub_url~v2.9"}, "error": {"code": "ok"}})])
+        r = pub.upload_photos(["https://u.github.io/r/1.jpg"], access_token="tok",
+                              title="Titulo", description="Legenda")
+        assert r.state is PublishState.uploaded and r.publish_id == "p_pub_url~v2.9"
+        assert chamadas[0].url.path == PHOTO_INIT_PATH
+
+    def test_dominio_nao_verificado_falha_com_motivo(self):
+        pub, _, _ = _publicador([
+            (403, {"error": {"code": "url_ownership_unverified", "message": "verify"}})])
+        r = pub.upload_photos(["https://x.com/1.jpg"], access_token="tok",
+                              title="t", description="d")
+        assert r.state is PublishState.failed and "url_ownership_unverified" in r.error
+
+
+class TestHospedagem:
+    def test_publica_e_espera_o_pages_servir(self, tmp_path):
+        from agent.publish.media_host import GitPagesHost
+
+        (tmp_path / "repo" / ".git").mkdir(parents=True)
+        slide = tmp_path / "s1.jpg"
+        slide.write_bytes(b"jpg")
+        comandos: list[list[str]] = []
+
+        class R:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        def run(cmd, **kw):
+            comandos.append(cmd)
+            return R()
+
+        respostas = iter([404, 200])
+        cliente = httpx.Client(transport=httpx.MockTransport(
+            lambda req: httpx.Response(next(respostas))))
+        host = GitPagesHost(tmp_path / "repo", "https://u.github.io/r/", runner=run,
+                            client=cliente, sleeper=lambda s: None)
+        urls = host.publish([slide], "seucanal/2026-09-20/1500")
+        assert urls == ["https://u.github.io/r/seucanal/2026-09-20/1500/s1.jpg"]
+        assert [c[1] for c in comandos] == ["add", "commit", "push"]
+        assert (tmp_path / "repo" / "seucanal/2026-09-20/1500/s1.jpg").exists()
+
+    def test_png_vira_jpeg(self, tmp_path):
+        from PIL import Image
+
+        from agent.publish.media_host import to_jpeg
+        png = tmp_path / "slide-1.png"
+        Image.new("RGB", (1080, 1920), (10, 10, 12)).save(png)
+        (jpg,) = to_jpeg([png], tmp_path / "out")
+        with Image.open(jpg) as img:
+            assert img.format == "JPEG" and img.size == (1080, 1920)

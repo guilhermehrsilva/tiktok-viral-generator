@@ -58,6 +58,10 @@ laboratorio fisica physics quimica chemistry biologia biology genoma genome
 genetica dna rna proteina protein celula neurociencia neuroscience microbioma
 clima climate climatico energia energy fusao fusion nuclear solar eolica
 bateria baterias battery hidrogenio hydrogen fotovoltaico supercondutor
+internet web wifi bluetooth 5g 6g android ios iphone ipad macos windows smartphone
+smartphones celular celulares aplicativo aplicativos notebook laptop hardware firmware
+transistor microprocessador microchip semicondutor eniac arpanet criptografica
+huggingface transformers deepfake deepfakes chatbots
 """.split())
 
 # Sozinhos nao dizem nada ("lancamento" pode ser de qualquer coisa), mas somados
@@ -76,6 +80,16 @@ billion million research study engineering engineer build built tool tooling
 # e vantagem inicial, nao aprovacao automatica.
 PRIOR_POR_FONTE: dict[str, float] = {
     "hacker_news": 0.22,
+    # Redacoes de tech tambem cobrem console, show e celebridade: vantagem,
+    # nao passe livre -- mesmo raciocinio do HN.
+    "rss_tech_br": 0.22,
+    "rss_tech": 0.22,
+    "rss_ciencia": 0.22,
+    # Estes dois SAO o nicho por construcao: o Hub so lista modelos de IA, e o
+    # arquivo e curado a mao para historia da computacao e ciencia. Aqui o
+    # prior aprova sozinho, de proposito.
+    "huggingface": 0.6,
+    "arquivo": 0.6,
 }
 
 # Abaixo disso o termo e descartado. Calibrado contra os 20 titulos reais em

@@ -44,10 +44,24 @@ class Settings(BaseSettings):
     pexels_api_key: str = ""
 
     # --- producao ---
+    # "ffmpeg": renderizador proprio (narracao com pronuncia corrigida, legenda
+    # da marca, ~20s por video). "mpt": o MoneyPrinterTurbo, que fica de reserva.
+    renderer: str = "ffmpeg"
+    # Vozes do renderizador proprio: monolingues pt-BR. A Multilingual (padrao
+    # do MPT, abaixo) troca o sotaque no meio da frase -- reportado no
+    # primeiro video do piloto em 20/09/2026 ("Discorda?").
+    narrator_voice: str = "pt-BR-FranciscaNeural"
+    narrator_voice_male: str = "pt-BR-AntonioNeural"
     voice_name: str = VOICES_PTBR[0]
     font_name: str = FONT_PTBR
-    font_size: int = 72
-    subtitle_position: str = "two_thirds_bottom"
+    # Legenda palavra-a-palavra: uma palavra por vez precisa ser grande e ter
+    # contorno grosso para ler sobre clipe claro. Posicao "custom" a 60% da
+    # altura: abaixo do cartao do gancho (terco de cima) e acima da faixa que
+    # a interface do TikTok cobre (legenda, perfil, musica).
+    font_size: int = 84
+    subtitle_position: str = "custom"
+    subtitle_custom_position: float = 60.0
+    subtitle_stroke_width: float = 3.0
 
     # --- LLM (primeiro modelo do projeto, M3) ---
     # Sob a restricao de $0 o padrao nao e Claude: e free tier. O adaptador do
@@ -82,10 +96,27 @@ class Settings(BaseSettings):
     # mandar isso para modelo que nao suporta devolve 400, e o caminho verificado
     # em 18/09/2026 foi sem o parametro.
     groq_reasoning_effort: str = ""
+    # --- OpenRouter (principal desde 20/09/2026) ---
+    # Chave com credito ($100 ate 03/2027). Virou a rota principal por dois
+    # motivos do autor: a cota do Gemini no AI Studio disputa requisicao
+    # com outras automacoes dele, e o endpoint pago do OpenRouter nao consome
+    # aquela cota. Uso consciente: os modelos baratos primeiro na rota
+    # (deepseek-v4-flash ~$0.04/M tokens, gemini-2.5-flash-lite ~$0.10/M), os
+    # caros so como reserva -- um video sai por centavos de dolar.
+    openrouter_api_key: str = ""
+    # Padrao dos comandos manuais (`llm-health`, `write --provider openrouter`).
+    openrouter_model: str = "deepseek/deepseek-v4-flash"
+    # OpenRouter pede identificacao do app (ranking de apps, sem custo).
+    openrouter_app_url: str = ""
+    openrouter_app_title: str = "tiktok-viral-generator"
     # 60s nao bastavam: geracao de roteiro no free tier passa disso mesmo com o
     # raciocinio desligado, e o timeout caia no meio da chamada -- gastando a cota
     # sem receber a resposta.
     llm_timeout_s: float = 120.0
+    # Rota por estagio do piloto automatico, sobrescrevendo a padrao de
+    # `adapters/llm_factory.py`. JSON no .env, ex.:
+    # AGENT_LLM_ROUTES='{"writer": "gemini:gemini-3.8-flash,groq:openai/gpt-oss-120b@low"}'
+    llm_routes: dict[str, str] = {}
 
     # --- pesquisador ---
     # Cinco fontes cobrem um tema sem estourar a cota por minuto do free tier
@@ -107,6 +138,19 @@ class Settings(BaseSettings):
     # Chunk do PUT de bytes. < 5 MB sobe em 1 chunk; > 64 MB exige multiplos.
     tiktok_chunk_size: int = 10_000_000
     tiktok_timeout_s: float = 60.0
+
+    # --- carrossel por API (opcional) ---
+    # Clone de um repo com GitHub Pages + a URL publica dele, verificada como
+    # prefixo no portal do TikTok. Vazio = carrossel sai como pacote manual.
+    media_repo_dir: Path | None = None
+    media_base_url: str = ""
+
+    # --- piloto automatico ---
+    # Push no celular via ntfy.sh (gratis, sem conta). Vazio = so aviso local.
+    ntfy_topic: str = ""
+    ntfy_server: str = "https://ntfy.sh"
+    # Minutos de antecedencia com que o timer dispara antes do horario do post.
+    autopilot_lead_min: int = 35
 
     # --- armazenamento ---
     data_dir: Path = PROJECT_ROOT / "data"

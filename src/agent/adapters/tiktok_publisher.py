@@ -39,6 +39,12 @@ from agent.ports.publisher import (
 
 BASE_URL = "https://open.tiktokapis.com"
 INIT_PATH = "/v2/post/publish/inbox/video/init/"
+# Foto (carrossel): endpoint de conteudo, so aceita PULL_FROM_URL de dominio ou
+# prefixo de URL verificado no portal. MEDIA_UPLOAD = vai para a inbox, como o
+# video; aqui titulo e descricao SAO aceitos pela API.
+PHOTO_INIT_PATH = "/v2/post/publish/content/init/"
+TITULO_MAX = 90
+DESCRICAO_MAX = 4000
 STATUS_PATH = "/v2/post/publish/status/fetch/"
 
 # Abaixo disto, chunk unico com o tamanho do arquivo inteiro.
@@ -112,6 +118,55 @@ class TikTokPublisher:
         return PublishResult(
             state=PublishState.uploaded, publish_id=publish_id, video_path=video_path
         )
+
+    def upload_photos(self, image_urls: list[str], *, access_token: str, title: str,
+                      description: str) -> PublishResult:
+        """Carrossel para a inbox a partir de URLs publicas verificadas.
+
+        O TikTok baixa as imagens (PULL_FROM_URL); por isso elas precisam estar
+        num prefixo de URL verificado no portal do app. Formato aceito: JPEG ou
+        WebP -- PNG fica de fora.
+        """
+        if not access_token:
+            raise PublisherAuthError("sem access_token")
+        if not image_urls:
+            return PublishResult(state=PublishState.failed, error="carrossel sem imagem")
+        self._throttle()
+        try:
+            r = self._client.post(
+                PHOTO_INIT_PATH,
+                json=self.build_photo_payload(image_urls, title, description),
+                headers={**self._auth(access_token),
+                         "Content-Type": "application/json; charset=UTF-8"},
+            )
+        except httpx.HTTPError as exc:
+            return PublishResult(state=PublishState.failed, error=f"falha de rede: {exc}")
+        corpo = _corpo(r)
+        try:
+            _checar_erro(corpo, status_http=r.status_code)
+            publish_id = str(corpo["data"]["publish_id"])
+        except (PublisherError, KeyError, TypeError) as exc:
+            return PublishResult(state=PublishState.failed, error=str(exc)[:300])
+        return PublishResult(state=PublishState.uploaded, publish_id=publish_id)
+
+    @staticmethod
+    def build_photo_payload(image_urls: list[str], title: str, description: str) -> dict:
+        return {
+            "post_info": {
+                "title": title[:TITULO_MAX],
+                "description": description[:DESCRICAO_MAX],
+                # Modo foto sem musica e raro no feed; o app sugere a trilha e
+                # a pessoa troca na conclusao se quiser.
+                "auto_add_music": True,
+            },
+            "source_info": {
+                "source": "PULL_FROM_URL",
+                "photo_cover_index": 0,
+                "photo_images": list(image_urls),
+            },
+            "post_mode": "MEDIA_UPLOAD",
+            "media_type": "PHOTO",
+        }
 
     def fetch_status(self, publish_id: str, *, access_token: str) -> str:
         """Estado atual do post, como a API reporta (string opaca)."""

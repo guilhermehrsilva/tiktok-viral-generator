@@ -203,6 +203,12 @@ class SignalStore:
         for col in ("saves", "comments", "shares"):
             if col not in cols("metrics"):
                 conn.execute(f"ALTER TABLE metrics ADD COLUMN {col} INTEGER")
+        # Piloto automatico: o post sabe de qual roteiro/formato/slot veio, e
+        # e isso que deixa as metricas voltarem ao planejador de formato.
+        for col, tipo in (("format", "TEXT"), ("script_id", "INTEGER"),
+                          ("carousel_id", "INTEGER"), ("slot", "TEXT")):
+            if col not in cols("posts"):
+                conn.execute(f"ALTER TABLE posts ADD COLUMN {col} {tipo}")
 
     @contextmanager
     def _conn(self) -> Iterator[sqlite3.Connection]:
@@ -283,7 +289,18 @@ class SignalStore:
                 " ORDER BY decided_at DESC LIMIT ?",
                 (corte, limit),
             ).fetchall()
-        return [r["term"] for r in rows]
+            # O que virou roteiro ou carrossel tambem foi coberto, mesmo sem
+            # ter passado pelo curador (`research --topic` e o piloto
+            # automatico escrevem direto). Visto em 19/09: o short do cerebro
+            # foi produzido de manha e o tema voltou ao topo a tarde.
+            produzidos = conn.execute(
+                "SELECT topic FROM scripts WHERE created_at >= ?"
+                " UNION SELECT topic FROM carousels WHERE created_at >= ?",
+                (corte, corte),
+            ).fetchall()
+        termos = [r["term"] for r in rows]
+        termos.extend(r["topic"] for r in produzidos if r["topic"] not in termos)
+        return termos[:limit]
 
     def topic_count(self) -> int:
         with self._conn() as conn:
@@ -444,6 +461,10 @@ class SignalStore:
         *,
         status: str,
         error: str | None = None,
+        format: str | None = None,
+        script_id: int | None = None,
+        carousel_id: int | None = None,
+        slot: str | None = None,
     ) -> int:
         """Grava uma subida a inbox, com ou sem publish_id da API.
 
@@ -453,14 +474,39 @@ class SignalStore:
         """
         with self._conn() as conn:
             cur = conn.execute(
-                "INSERT INTO posts (publish_id, video_path, status, error, created_at)"
-                " VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO posts (publish_id, video_path, status, error, created_at,"
+                " format, script_id, carousel_id, slot) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     publish_id, video_path, status, error,
-                    datetime.now(UTC).isoformat(),
+                    datetime.now(UTC).isoformat(), format, script_id, carousel_id, slot,
                 ),
             )
         return int(cur.lastrowid or 0)
+
+    def format_performance_rows(self) -> list[dict]:
+        """Ultima metrica de cada post com o formato dele (para o planejador).
+
+        Formato vem do proprio post (piloto automatico) ou do roteiro ligado
+        pela metrica (`metrics-record --script-id`).
+        """
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT m.publish_id, COALESCE(p.format, s.format) AS format,"
+                " m.views, m.completion_rate, m.saves, m.collected_at"
+                " FROM metrics m"
+                " LEFT JOIN (SELECT publish_id, MAX(format) AS format FROM posts"
+                "            GROUP BY publish_id) p ON p.publish_id = m.publish_id"
+                " LEFT JOIN scripts s ON s.id = m.script_id"
+                " ORDER BY m.collected_at DESC, m.id DESC"
+            ).fetchall()
+        vistos: set[str] = set()
+        saida: list[dict] = []
+        for r in rows:
+            if r["publish_id"] in vistos:
+                continue
+            vistos.add(r["publish_id"])
+            saida.append(dict(r))
+        return saida
 
     def update_post_status(
         self, publish_id: str, *, status: str, error: str | None = None

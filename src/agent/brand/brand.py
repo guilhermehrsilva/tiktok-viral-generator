@@ -73,7 +73,19 @@ class Brand:
         return pillar.accent if pillar is not None else self.accent_primary
 
     def presenter_for(self, pillar_id: str) -> Presenter | None:
-        """Elenco por formato. Fora dos 4: None -- o video roda sem avatar."""
+        """Quem apresenta este pilar. Sem formato declarado: None -- sem avatar.
+
+        Ate a manha de 20/09/2026 isto era elenco por formato (Iris na noticia,
+        Theo no tutorial e no vs, o resto sem avatar). Na noite do mesmo dia
+        virou assinatura do canal: existe clipe base fotorrealista do THEO --
+        piscada e balanco de cabeca **humanos**, porque foram gerados como
+        video -- e nao existe o da Iris. Um apresentador sintetizado ao lado de
+        um filmado seria uma diferenca de qualidade visivel no mesmo canal.
+
+        A Iris nao foi removida: ela esta no `brand.json` com a lista de
+        formatos vazia, e volta sozinha a disputar pilar quando o clipe base
+        dela existir. Quem decide continua sendo o JSON, nao esta funcao.
+        """
         for p in self.presenters.values():
             if pillar_id in p.formats:
                 return p
@@ -138,6 +150,31 @@ def voice_brief() -> str:
         "Nunca emoji, nunca 'fala galera', nunca 'se inscreva'.")
 
 
+def pillar_brief(pillar_id: str, mode: str = "long") -> str:
+    """Bloco TIPO DE CONTEUDO do prompt: formula de gancho, batidas e CTA.
+
+    Ate 19/09 a formula de cada pilar existia no `brand.json` e nao chegava a
+    prompt nenhum -- "curiosidade", "tutorial" e "noticia" saiam com a mesma
+    estrutura. E o que separa os tipos de conteudo para quem assiste.
+    """
+    brand = load()
+    p = brand.pillars.get(pillar_id) or brand.pillars["news"]
+    batidas = " -> ".join(f"({i}) {b}" for i, b in enumerate(p.beats, start=1))
+    if mode == "short":
+        estrutura = ("gancho + so a batida (1) em uma frase + fechamento em loop. "
+                     f"Batidas: {batidas}")
+    elif mode == "carousel":
+        estrutura = f"slide 1 = gancho; slides 2-4 = batidas; slide 5 = conclusao. {batidas}"
+    else:
+        estrutura = f"gancho -> contexto (quem, o que, por que importa) -> {batidas} -> fechamento"
+    return (
+        f"TIPO DE CONTEUDO: {p.tag} ({p.id})\n"
+        f"- Formula do gancho: {p.hook_formula}. Exemplo de tom (nao copie): \"{p.example}\"\n"
+        f"- Estrutura: {estrutura}\n"
+        f"- CTA da marca para este tipo (adapte ao tema): \"{p.cta}\""
+    )
+
+
 def suggest_content_pillar(topic: str) -> str:
     """Pilar de conteudo pelo assunto. Orientacao; o roteirista escolhe."""
     brand = load()
@@ -176,4 +213,4 @@ def avatar_prompt(presenter_id: str, *, angulo: str = "frontal",
 
 
 __all__ = ["BRAND_JSON", "Brand", "ContentPillar", "Presenter", "avatar_prompt",
-           "load", "suggest_content_pillar", "voice_brief"]
+           "load", "pillar_brief", "suggest_content_pillar", "voice_brief"]

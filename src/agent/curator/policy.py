@@ -56,6 +56,11 @@ REGRAS: tuple[PolicyRule, ...] = (
             "lula", "bolsonaro", "ministro do stf", "impeachment", "cpi",
             "deputado", "senador", "governador", "prefeito", "partido",
             "election", "senate", "congress", "impeachment", "parliament",
+            # Nomes de chefe de governo em campanha permanente: tema de IA com
+            # eles vira politica partidaria no primeiro comentario (visto em
+            # 19/09/2026: "Trump abre enquete" passou pelo portao).
+            "trump", "biden", "kamala", "putin", "zelensky", "netanyahu", "milei",
+            "maduro", "casa branca", "white house",
         ],
         "politica partidaria: fora do nicho e transforma qualquer erro em crise",
     ),
@@ -71,6 +76,23 @@ REGRAS: tuple[PolicyRule, ...] = (
             "victims", "massacre", "earthquake", "wildfire",
         ],
         "tragedia com vitima real: nao se faz conteudo viral sobre isso",
+    ),
+    _regra(
+        "comercial",
+        [
+            # Guia de compra, promocao e produto financeiro. Visto no radar de
+            # 19/09/2026: "Seguro para celular em 2026: quais planos cobrem
+            # furto de dados e Pix?" passou no nicho (celular, dados) e ganhou
+            # nota alta de interesse -- e e recomendacao de seguro.
+            "seguro para", "seguro de celular", "planos de seguro", "quais planos",
+            "melhores planos", "cupom", "cupons", "desconto", "descontos", "promocao",
+            "promocoes", "black friday", "cyber monday", "vale a pena comprar",
+            "onde comprar", "menor preco", "apostas", "bets", "cassino", "emprestimo",
+            "consorcio", "renda extra", "ganhar dinheiro", "coupon", "discount",
+            "deal alert", "best deals", "on sale",
+        ],
+        "conteudo comercial ou conselho financeiro: o canal explica tecnologia, nao "
+        "recomenda compra, promocao nem produto financeiro",
     ),
     _regra(
         "menores",

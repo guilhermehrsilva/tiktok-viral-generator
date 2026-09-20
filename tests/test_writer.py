@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 import pytest
 
 from agent.adapters.scripted_llm import ScriptedLLM
-from agent.models import Dossier, Fact
+from agent.models import Dossier, Fact, Script
 from agent.ports.llm import LLMUnavailable
 from agent.writer.writer import (
     MAX_PALAVRAS,
@@ -76,6 +76,7 @@ def resposta(
         "body": (extra + " " + corpo).strip(),
         "closing": closing,
         "search_terms": TERMOS if termos is None else termos,
+        "caption": "Modelo gigante, disco pequeno.\nO Bonsai 27B mostra o que a compressao ja faz.",
         "used_facts": list(used),
     }, ensure_ascii=False)
 
@@ -382,3 +383,33 @@ class TestDossieFino:
         assert thin_dossier_reason(
             Dossier(topic=referencia.topic, facts=referencia.facts, collected_at=AGORA)
         ) == ""
+
+
+class TestLegendaDoPost:
+    """Guia da marca: gancho escrito SEM repetir o audio + contexto; sem link/hashtag."""
+
+    def _script(self, caption: str) -> Script:
+        return Script(topic="Tema", hook="Um modelo gigante agora cabe num pendrive.",
+                      body=" ".join(["palavra"] * 60), closing="E voce, confia?",
+                      search_terms=["neural network nodes", "data stream tunnel"],
+                      caption=caption)
+
+    def test_legenda_boa_passa(self):
+        from agent.writer.writer import caption_problems
+        assert caption_problems(self._script(
+            "Disco pequeno, modelo enorme.\nO Bonsai 27B reduz 9x o tamanho.")) == []
+
+    def test_repetir_o_hook_reprova(self):
+        from agent.writer.writer import caption_problems
+        (p,) = caption_problems(self._script("Um modelo gigante agora cabe num pendrive."))
+        assert "repete o hook" in p
+
+    def test_hashtag_link_e_tres_linhas_reprovam(self):
+        from agent.writer.writer import caption_problems
+        problemas = " ".join(caption_problems(self._script(
+            "Linha um #ia\nveja em prismml.com\nlinha tres")))
+        assert "hashtag" in problemas and "link" in problemas and "linha" in problemas
+
+    def test_vazia_reprova_com_instrucao(self):
+        from agent.writer.writer import caption_problems
+        assert "2 linhas" in caption_problems(self._script(""))[0]

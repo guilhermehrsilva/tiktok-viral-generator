@@ -26,7 +26,7 @@ def parecer(nota_hook: int = 2, model: str = "gemini-2.5-flash",
             provider: str = "gemini") -> Review:
     notas = [
         CriterionScore(criterion=c, score=2, reason=f"sem ressalva em {c.value}")
-        for c in Criterion if c is not Criterion.hook
+        for c in Criterion if c not in (Criterion.hook, Criterion.fluxo)
     ]
     notas.append(CriterionScore(
         criterion=Criterion.hook, score=nota_hook, reason="o hook entrega o assunto",
@@ -39,7 +39,7 @@ class TestGravacao:
     def test_parecer_volta_com_nota_e_motivo_de_cada_criterio(self, store):
         store.record_review(parecer(), usage=(1500, 200), latency_s=2.2)
         lido = store.latest_review()
-        assert set(lido.by_criterion) == set(Criterion)
+        assert set(lido.by_criterion) == set(Criterion) - {Criterion.fluxo}
         assert lido.by_criterion[Criterion.hook].reason == "o hook entrega o assunto"
         assert lido.total == parecer().total
 

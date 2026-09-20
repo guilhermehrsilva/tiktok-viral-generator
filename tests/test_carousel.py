@@ -38,7 +38,7 @@ def slides(headlines=None, texts=None, visuals=None, caption=None) -> str:
 def parecer(**notas: int) -> str:
     return json.dumps({
         c: {"reason": f"motivo {c}", "score": notas.get(c, 2)}
-        for c in ("hook", "fonte", "cta")})
+        for c in ("hook", "fonte", "fluxo", "cta")})
 
 
 class TestRoteirista:
@@ -87,6 +87,11 @@ class TestRoteirista:
         assert report.ok
         assert any("vocabulario" in v for v in report.attempts[0].violations)
 
+    def test_prompt_pede_fio_narrativo(self):
+        from agent.writer.carousel import build_prompt
+        prompt = build_prompt(dossie())
+        assert "Fio" in prompt and "sozinho" in prompt
+
 
 class TestJuiz:
     def test_aprova_com_rubrica_boa(self):
@@ -94,7 +99,17 @@ class TestJuiz:
         report = judge_carousel(carrossel, dossie(),
                                 ScriptedLLM(responses=[parecer()]))
         assert report.approved and report.review is not None
-        assert report.review.total == 8
+        assert report.review.total == 10
+
+    def test_fluxo_zerado_reprova_e_volta_como_nota(self):
+        """Slide solto ('Segundo artigo em 2025') zera fluxo e nao passa,
+        mesmo com hook/fonte/cta no maximo -- e a nota volta ao roteirista."""
+        carrossel = Carousel.model_validate_json(slides())
+        report = judge_carousel(carrossel, dossie(),
+                                ScriptedLLM(responses=[parecer(fluxo=0)]))
+        assert not report.approved
+        assert report.review is not None
+        assert any("fluxo" in n for n in report.review.revision_notes)
 
     def test_politica_reprova_sem_modelo(self):
         txts = ["Arraste e veja", "Morte no laboratorio", "Mantem 98,2%",
@@ -130,3 +145,114 @@ class TestSlides:
         for s in saidas:
             with Image.open(s) as img:
                 assert img.size == (1080, 1920)
+
+    def test_titulo_legivel_medido_no_png(self, tmp_path):
+        """O carrossel de 19/09 saiu com titulo de ~10px e passou no aceite
+        de dimensao. O aceite agora mede tinta no PNG."""
+        from agent.render.carousel import ALTURA_MINIMA_TITULO_PX, ink_height, legible
+        carrossel = Carousel.model_validate_json(slides())
+        for s in render_carousel(carrossel, tmp_path / "car", "news"):
+            assert legible(s), f"{s.name}: {ink_height(s)}px"
+            assert ink_height(s) >= ALTURA_MINIMA_TITULO_PX
+
+    def test_titulo_minusculo_reprova(self, tmp_path):
+        from PIL import Image, ImageDraw
+
+        from agent.render.carousel import legible
+        png = tmp_path / "bitmap.png"
+        img = Image.new("RGB", (1080, 1920), (10, 10, 12))
+        ImageDraw.Draw(img).text((70, 1000), "Titulo em fonte bitmap", fill=(233, 238, 241))
+        img.save(png)
+        assert not legible(png)
+
+    def test_sem_fonttools_usa_a_fonte_da_marca(self, monkeypatch):
+        """'Nao sei se cobre' nao pode virar fonte bitmap."""
+        import builtins
+
+        from PIL import ImageFont
+
+        from agent.render import typography
+        typography._codepoints.cache_clear()
+        original = builtins.__import__
+
+        def sem_fonttools(name, *args, **kwargs):
+            if name.startswith("fontTools"):
+                raise ImportError(name)
+            return original(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", sem_fonttools)
+        try:
+            f = typography.font(typography.DISPLAY, 96, "Configuração ção")
+        finally:
+            typography._codepoints.cache_clear()
+        assert isinstance(f, ImageFont.FreeTypeFont) and f.size == 96
+
+    def test_ultimo_slide_credita_a_fonte_na_legenda(self, tmp_path):
+        carrossel = Carousel.model_validate_json(slides())
+        carrossel = carrossel.model_copy(update={"facts": dossie().facts})
+        render_carousel(carrossel, tmp_path / "car", "news")
+        legenda = (tmp_path / "car" / "caption.txt").read_text(encoding="utf-8")
+        assert "Fontes:" in legenda and "#seucanal" in legenda
+
+
+class TestLayoutDoSlide:
+    """A distribuicao de conteudo que veio da referencia de 20/09/2026."""
+
+    def test_o_acento_sempre_toca_o_titulo(self):
+        from agent.render.carousel import _destaque
+
+        # Duas linhas ou mais: a ultima linha inteira.
+        assert _destaque(["Peso minimo,", "performance maxima"]) == (1, 0)
+        # Ultima linha curta demais para se sustentar: acende a de cima.
+        assert _destaque(["Um titulo que", "cai"]) == (0, 0)
+        # Uma linha so: a ultima palavra, se ela se sustentar.
+        assert _destaque(["Abra seu Gmail"]) == (0, 1)
+        assert _destaque(["Tudo bem"]) == (-1, 0)
+
+    def test_chip_da_marca_e_contador_no_topo(self, tmp_path):
+        """Quem le tem de saber de quem e a peca e quanto falta antes do titulo."""
+        import numpy as np
+        from PIL import Image
+
+        from agent.render.carousel import TOPO_CHIP, render_slide
+        carrossel = Carousel.model_validate_json(slides())
+        png = render_slide(carrossel, 2, tmp_path / "s2.png", "news")
+        with Image.open(png) as img:
+            topo = np.array(img.convert("RGB"))[TOPO_CHIP:TOPO_CHIP + 42]
+        # Barra de acento a esquerda (verde forte) e contador a direita.
+        verde = (topo[:, :, 1].astype(int) - topo[:, :, 0]) > 80
+        assert verde[:, 80:95].any(), "sem barra de acento no chip"
+        assert verde[:, 800:].any(), "sem contador no canto direito"
+
+    def test_ultimo_slide_pede_salvar_em_vez_de_deslizar(self, tmp_path):
+        from agent.render.carousel import render_carousel as rc
+        carrossel = Carousel.model_validate_json(slides())
+        saidas = rc(carrossel, tmp_path / "car", "news")
+        assert len(saidas) == 5
+        # O texto e desenhado, entao o que da para medir e que os dois ultimos
+        # slides diferem no rodape -- mesma altura, conteudo diferente.
+        import numpy as np
+        from PIL import Image
+
+        from agent.render.carousel import RODAPE_TEXTO
+        with Image.open(saidas[3]) as a, Image.open(saidas[4]) as b:
+            fa = np.array(a.convert("L"))[RODAPE_TEXTO:RODAPE_TEXTO + 40, 600:]
+            fb = np.array(b.convert("L"))[RODAPE_TEXTO:RODAPE_TEXTO + 40, 600:]
+        assert not np.array_equal(fa, fb)
+
+    def test_sem_foto_o_fundo_continua_quase_preto(self, tmp_path):
+        """A primeira versao do banho de acento tingia o quadro inteiro de verde.
+
+        A regra da marca e fundo quase-preto; o banho amarra a FOTO ao pilar, e
+        sem foto ele nao tem o que amarrar.
+        """
+        import numpy as np
+        from PIL import Image
+
+        from agent.render.carousel import BARRA_ESQ, render_slide
+        carrossel = Carousel.model_validate_json(slides())
+        png = render_slide(carrossel, 2, tmp_path / "s2.png", "news")
+        with Image.open(png) as img:
+            # Faixa vazia entre o chip e o titulo, fora da fita da borda.
+            faixa = np.array(img.convert("RGB"))[300:900, BARRA_ESQ + 40:]
+        assert faixa.max() <= 20, f"fundo tingido: max {faixa.max()}"

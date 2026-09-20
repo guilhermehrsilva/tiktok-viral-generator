@@ -46,6 +46,7 @@ def roteiro_json(total: int = 187) -> str:
         "closing": FECHAMENTO,
         "search_terms": ["neural network nodes", "ai deep learning loop",
                          "data stream tunnel", "abstract digital plexus"],
+        "caption": "Modelo gigante, disco pequeno.\nO Bonsai 27B mostra o que a compressao ja faz.",
         "used_facts": [0, 1],
     }, ensure_ascii=False)
 

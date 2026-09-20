@@ -26,7 +26,14 @@ from typing import Any
 
 import httpx
 
-from agent.ports.llm import Completion, LLMBlocked, LLMError, LLMUnavailable, Usage
+from agent.ports.llm import (
+    Completion,
+    LLMBlocked,
+    LLMError,
+    LLMQuotaExhausted,
+    LLMUnavailable,
+    Usage,
+)
 
 BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 
@@ -86,8 +93,10 @@ class GeminiFree:
         latencia = round(time.monotonic() - inicio, 3)
 
         if r.status_code == 429:
-            raise LLMUnavailable(f"gemini negou cota (429){_retry_after(r)}")
+            raise quota_error(r, self.model)
         if r.status_code in (500, 502, 503, 504):
+            # 503 "high demand" e comum nos 3.x no free tier (medido em
+            # 19/09/2026): e transitorio, e o roteador tenta de novo ou segue.
             raise LLMUnavailable(f"gemini instavel ({r.status_code})")
         if r.status_code != 200:
             raise LLMError(f"gemini devolveu {r.status_code}: {r.text[:300]}")
@@ -187,6 +196,51 @@ def to_openapi_schema(schema: dict) -> dict:
     return saida
 
 
-def _retry_after(r: httpx.Response) -> str:
-    valor = r.headers.get("retry-after")
-    return f"; tente em {valor}s" if valor else ""
+def quota_error(r: httpx.Response, model: str) -> LLMQuotaExhausted:
+    """429 do Gemini traduzido em alcance: minuto ou dia.
+
+    O corpo diz qual cota estourou (`QuotaFailure.violations[].quotaId`) e o
+    teto dela (`quotaValue`). Medido em 19/09/2026: o gemini-2.5-flash no free
+    tier tem `GenerateRequestsPerDayPerProjectPerModel-FreeTier` = 20 -- vinte
+    pedidos por dia, que um unico video (pesquisa + roteiro + juiz) consome
+    quase inteiro. Sem ler isso, "429" parecia instabilidade e o pipeline
+    insistia no mesmo modelo.
+    """
+    escopo, teto, espera = "unknown", "", None
+    try:
+        erro = (r.json() or {}).get("error") or {}
+    except ValueError:
+        erro = {}
+    for det in erro.get("details") or []:
+        tipo = str(det.get("@type", ""))
+        if tipo.endswith("QuotaFailure"):
+            for v in det.get("violations") or []:
+                qid = str(v.get("quotaId", ""))
+                teto = str(v.get("quotaValue", teto))
+                if "PerDay" in qid:
+                    escopo = "day"
+                elif "PerMinute" in qid and escopo != "day":
+                    escopo = "minute"
+        elif tipo.endswith("RetryInfo"):
+            espera = _segundos(str(det.get("retryDelay", "")))
+    if espera is None:
+        valor = r.headers.get("retry-after")
+        espera = _segundos(valor) if valor else None
+    if teto == "0":
+        # Modelo fora do free tier (ex. lyria): nao volta no reset.
+        escopo = "day"
+    detalhe = f"; teto {teto}" if teto else ""
+    if espera is not None:
+        detalhe += f"; tente em {espera:g}s"
+    return LLMQuotaExhausted(
+        f"gemini {model} negou cota (429, {escopo}{detalhe})",
+        scope=escopo, retry_after_s=espera, limit=teto)
+
+
+def _segundos(valor: str) -> float | None:
+    """'11s', '11.5s', '11' -> 11.0. Vazio ou lixo -> None."""
+    limpo = valor.strip().removesuffix("s")
+    try:
+        return float(limpo)
+    except ValueError:
+        return None

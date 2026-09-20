@@ -26,8 +26,9 @@ class TestPool:
         assert all(t.isascii() for t in tags)
         assert all(len(t.split()) >= 2 for t in tags)  # conceito vira cena
 
-    def test_quatro_pilares(self):
-        assert sorted(PILLARS) == ["A", "B", "C", "D"]
+    def test_cinco_pilares(self):
+        """Os 4 de tech + E (ciencia e espaco, 19/09/2026)."""
+        assert sorted(PILLARS) == ["A", "B", "C", "D", "E"]
 
 
 class TestValidacao:
@@ -59,6 +60,8 @@ class TestPilar:
         assert suggest_pillar("Vazamento expoe falha de seguranca em servidor") == "B"
         assert suggest_pillar("Bonsai 2 27B: modelo de 27B em 5,9 GB") == "C"
         assert suggest_pillar("Prefeitura lanca aplicativo de onibus") == "D"
+        assert suggest_pillar("O lado roxo de Marte: gelo, poeira e luz") == "E"
+        assert suggest_pillar("Robo humanoide explora Marte") == "A"
 
 
 class TestPrompt:

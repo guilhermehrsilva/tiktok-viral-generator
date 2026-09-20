@@ -94,7 +94,7 @@ def preflight_carousel(carousel: dict, approved: bool,
                        slides_ok: bool) -> PreflightReport:
     """Pacote carrossel: parecer + 5 slides na marca."""
     return PreflightReport([
-        Gate("parecer aprovado (corte 6/8)", approved,
+        Gate("parecer aprovado (corte 8/10)", approved,
              "" if approved else "rode produce --mode carousel antes"),
         Gate("5 slides 1080x1920", slides_ok,
              "" if slides_ok else "slides fora do aceite"),

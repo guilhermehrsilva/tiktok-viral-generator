@@ -193,3 +193,17 @@ class TestDeduplicacao:
     def test_jaccard_lida_com_conjunto_vazio(self):
         assert jaccard(set(), {"a"}) == 0.0
         assert jaccard({"a"}, set()) == 0.0
+
+
+class TestConteudoComercial:
+    """Guia de compra e produto financeiro nao sao pauta do canal (radar de 19/09)."""
+
+    def test_seguro_e_promocao_bloqueiam_com_motivo(self):
+        from agent.curator import policy
+        v = policy.check("Seguro para celular em 2026: quais planos cobrem furto de dados e Pix?")
+        assert not v.allowed and v.rule == "comercial"
+        assert not policy.check("Black Friday: melhores descontos em notebooks").allowed
+
+    def test_seguranca_digital_continua_pauta(self):
+        from agent.curator import policy
+        assert policy.check("Golpe do Pix: como a IA detecta fraude em segundos").allowed

@@ -550,7 +550,7 @@ def _is_carousel_file(path: Path) -> bool:
 
 
 def _judge_carousel_cmd(store: Any, path: Path, llm: str, dry_run: bool) -> None:
-    """Parecer de carrossel (rubrica propria, corte 6/8)."""
+    """Parecer de carrossel (rubrica propria, corte 8/10)."""
     from datetime import UTC, datetime
 
     from agent.adapters.llm_factory import build_llm
@@ -591,7 +591,7 @@ def _judge_carousel_cmd(store: Any, path: Path, llm: str, dry_run: bool) -> None
                else typer.colors.YELLOW if s.score == 1 else typer.colors.RED)
         typer.secho(f"  [{s.score}/2] {s.criterion.value}: {s.reason}", fg=cor)
     estado = "APROVADO" if review.approved else "REPROVADO"
-    typer.secho(f"\n{estado}: {review.total}/8 (corte 6, nenhum zerado)",
+    typer.secho(f"\n{estado}: {review.total}/10 (corte 8, nenhum zerado)",
                 fg=typer.colors.GREEN if review.approved else typer.colors.RED)
     typer.echo(f"custo     : {report.usage.total_tokens} tokens, {report.latency_s}s")
 
@@ -827,7 +827,7 @@ def produce(
 
 def _produce_carousel_cmd(store: Any, dossier: Any, llm: str, out: Path | None,
                           revisions: int, dry_run: bool) -> None:
-    """Laco de carrossel: escreve, julga, revisa ate passar (corte 6/8)."""
+    """Laco de carrossel: escreve, julga, revisa ate passar (corte 8/10)."""
     from agent.adapters.llm_factory import build_llm
     from agent.pipeline import produce_carousel as rodar
     from agent.ports.llm import LLMError
@@ -927,9 +927,11 @@ def llm_health() -> None:
     provedores = configured()
     if not provedores:
         typer.secho(
-            "nenhuma chave de LLM configurada. As duas sao gratuitas:\n"
-            "  AGENT_GEMINI_API_KEY  -> aistudio.google.com/apikey\n"
-            "  AGENT_GROQ_API_KEY    -> console.groq.com/keys\n"
+            "nenhuma chave de LLM configurada. A principal e paga com credito:\n"
+            "  AGENT_OPENROUTER_API_KEY -> openrouter.ai/keys\n"
+            "As reservas sao gratuitas:\n"
+            "  AGENT_GROQ_API_KEY      -> console.groq.com/keys\n"
+            "  AGENT_GEMINI_API_KEY    -> aistudio.google.com/apikey\n"
             "Grave no .env (git-ignored).",
             fg=typer.colors.RED,
         )
@@ -962,7 +964,17 @@ def llm_health() -> None:
 
 @app.command()
 def health() -> None:
-    """Verifica se o renderizador esta de pe."""
+    """Verifica se o renderizador configurado esta de pe (ffmpeg ou MPT)."""
+    if settings.renderer == "ffmpeg":
+        from agent.adapters.ffmpeg_renderer import FfmpegRenderer
+        from agent.render.post import ffmpeg_bin
+
+        alive = FfmpegRenderer().health()
+        typer.secho(f"ffmpeg ({ffmpeg_bin()}): {'ok' if alive else 'sem subtitles/concat'}",
+                    fg=typer.colors.GREEN if alive else typer.colors.RED)
+        mpt = MptRenderer().health()
+        typer.echo(f"reserva MPT em {settings.renderer_url}: {'ok' if mpt else 'fora do ar'}")
+        sys.exit(0 if alive else 1)
     alive = MptRenderer().health()
     typer.secho(
         f"{settings.renderer_url}: {'ok' if alive else 'fora do ar'}",
@@ -1218,14 +1230,20 @@ def carousel_render(
 
 
 def _checar_slides(slides: list[Path]) -> None:
-    """Aceite do carrossel: 5 PNG 1080x1920 nao vazios."""
+    """Aceite do carrossel: 5 PNG 1080x1920 com titulo legivel medido."""
     from PIL import Image
+
+    from agent.render.carousel import ink_height, legible
 
     ok = len(slides) == 5
     for s in slides:
         with Image.open(s) as img:
             ok = ok and img.size == (1080, 1920) and s.stat().st_size > 0
-    (typer.secho("[OK  ] 5 slides 1080x1920", fg=typer.colors.GREEN)
+        if not legible(s):
+            typer.secho(f"[FALHA] {s.name}: titulo com {ink_height(s)}px de tinta "
+                        "(ilegivel)", fg=typer.colors.RED)
+            ok = False
+    (typer.secho("[OK  ] 5 slides 1080x1920, titulo legivel", fg=typer.colors.GREEN)
      if ok else typer.secho("[FALHA] slides fora do aceite", fg=typer.colors.RED))
     if not ok:
         raise typer.Exit(code=1)
@@ -1404,10 +1422,184 @@ def brand_avatar(
     typer.echo(f"seed: {p.seed} (fixo, sempre) | formatos: {', '.join(p.formats)}")
     typer.echo("enquadramento: 30-36% da altura, direita, peito p/ cima, "
                "fundo transparente, texto do lado oposto")
-    typer.echo("sai de cena nos 3s finais; nunca em perfil/logo/capa; "
-               "rotulo AIGC ligado")
+    typer.echo("encenacao: grande na chamada, canto no corpo, volta no fechamento; "
+               "nunca em perfil/logo/capa; rotulo AIGC ligado")
+    typer.echo("depois de gerar: salve em brand/assets/presenters/source/<id>.jpg e "
+               "rode scripts/make_presenter_cutouts.py (recorte + pontos do rosto)")
     typer.echo("\n--- negativo ---")
     typer.echo(brand.negative_prompt)
+
+
+@app.command("rerender")
+def rerender(
+    script_path: Path = typer.Option(..., "--script", "-s", exists=True, readable=True),
+    out_dir: Path = typer.Option(Path("output/_rerender"), "--out-dir"),
+    pillar: str = typer.Option("", "--pillar",
+                               help="padrao: o pilar gravado no proprio roteiro"),
+) -> None:
+    """Refaz o VIDEO de um roteiro ja aprovado, sem gastar LLM nem pauta.
+
+    Existe porque a coisa mais cara de testar uma mudanca de render e a parte
+    que nao mudou: radar, pesquisa, roteirista e juiz gastam cota, disputam
+    pauta com os slots do dia e podem simplesmente nao aprovar nada -- o dia
+    20/09/2026 acabou com quatro temas tentados e nenhum aprovado, so porque
+    as rodadas anteriores ja tinham consumido as boas pautas.
+
+    Um roteiro que **ja passou pelo juiz** e material de producao legitimo.
+    Daqui para a frente ele refaz exatamente o que mudou: clipes, narracao,
+    apresentador, legenda, trilha e pos-producao, pelo mesmo caminho que o
+    piloto usa (`SlotRunner.render_video`) -- nao e uma segunda implementacao
+    que pode divergir da de producao.
+    """
+    from agent.autopilot.runner import SlotRunner
+
+    script = _load_script(script_path)
+    pilar = pillar or script.pillar or "news"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    typer.echo(f"tema     : {script.topic}")
+    typer.echo(f"pilar    : {pilar} | formato: {script.format}")
+    typer.echo(f"narracao : {script.word_count} palavras")
+
+    runner = SlotRunner()
+    try:
+        video, medida = runner.render_video(script, out_dir, pilar)
+    except (OSError, RuntimeError, ValueError) as exc:
+        typer.secho(f"falha: {type(exc).__name__}: {exc}", fg=typer.colors.RED)
+        raise typer.Exit(code=1) from exc
+    typer.secho(f"\nvideo: {video}", fg=typer.colors.GREEN, bold=True)
+    typer.echo(f"  {medida['width']}x{medida['height']}, {medida['duration_s']}s, "
+               f"audio={'sim' if medida['has_audio'] else 'NAO'}")
+
+
+@app.command("presenter-preview")
+def presenter_preview(
+    script_path: Path = typer.Option(..., "--script", "-s", exists=True, readable=True),
+    presenter: str = typer.Option("theo", "--presenter", help="iris ou theo"),
+    out_dir: Path = typer.Option(Path("output/_apresentador"), "--out-dir"),
+    seconds: float = typer.Option(0.0, "--seconds",
+                                  help="so os N primeiros segundos (0 = tudo)"),
+    still: bool = typer.Option(False, "--still",
+                               help="forca o retrato parado, ignorando o clipe base"),
+) -> None:
+    """Sintetiza so a camada do apresentador e uma folha de contato para olhar.
+
+    Serve para conferir o artefato sem gastar uma rodada de LLM nem um slot: a
+    narracao sai do TTS (gratis), a camada sai em `apresentador.mp4` e um
+    quadro de cada encenacao vira `folha.png`. Foi assim que a boca escancarada
+    e a silhueta em retangulo apareceram -- olhando o pixel.
+
+    Usa o clipe base (`<id>_base.mp4`) quando ele existe, que e o caminho de
+    producao desde 20/09/2026; `--still` forca a reserva sintetizada.
+    """
+    import subprocess
+    import time
+
+    from PIL import Image
+
+    from agent.brand.brand import load as load_brand
+    from agent.config import PROJECT_ROOT
+    from agent.render import presenter as pr
+    from agent.render import presenter_video as pv
+    from agent.render.post import ffmpeg_bin
+    from agent.render.subtitles import align
+    from agent.voice.edge import VOZ_FEMININA, VOZ_MASCULINA, synthesize
+    from agent.voice.pronounce import respell
+
+    pasta = PROJECT_ROOT / "brand" / "assets" / "presenters"
+    clipe = pasta / f"{presenter}_base.json"
+    png = pasta / f"{presenter}.png"
+    usa_clipe = (not still and clipe.exists()
+                 and clipe.with_suffix(".mp4").exists())
+    if not usa_clipe and not (png.exists() and png.with_suffix(".json").exists()):
+        typer.secho(f"falta {clipe.name} (rode scripts/make_presenter_video.py) "
+                    f"ou {png.name} (rode scripts/make_presenter_cutouts.py)",
+                    fg=typer.colors.RED)
+        raise typer.Exit(code=2)
+
+    script = _load_script(script_path)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    falado = respell(script.narration)
+    audio = out_dir / "narracao.mp3"
+    voz = VOZ_FEMININA if presenter == "iris" else VOZ_MASCULINA
+    typer.echo(f"narrando ({voz})...")
+    tempos = synthesize(falado.text, audio, voice=voz)
+    palavras = align(falado, tempos)
+    # O ffprobe do lado do ffmpeg estatico -- o do Fedora nem sempre esta la
+    # (ver setup_renderer.sh); sem nenhum dos dois, cai na estimativa.
+    sonda = Path(ffmpeg_bin()).with_name("ffprobe")
+    dur = float(subprocess.run(
+        [str(sonda) if sonda.exists() else "ffprobe", "-v", "error",
+         "-show_entries", "format=duration", "-of", "csv=p=0", str(audio)],
+        capture_output=True, text=True).stdout.strip() or 0)
+    if not dur:
+        dur = script.estimated_duration_s
+    batidas = pr.batidas_por_tempo(script.hook, script.closing, palavras, dur)
+    if seconds:
+        dur = min(dur, seconds)
+
+    marca = load_brand()
+    acento = marca.accent_for(script.pillar or "news")
+    nome = marca.presenters[presenter].name if presenter in marca.presenters else ""
+    typer.echo(f"gancho ate {batidas.hook_end:.1f}s, fechamento em "
+               f"{batidas.closing_start:.1f}s, {dur:.1f}s no total")
+    typer.echo("material: " + ("clipe base (boca sintetizada)" if usa_clipe
+                               else "retrato parado (tudo sintetizado)"))
+
+    inicio = time.monotonic()
+    if usa_clipe:
+        base = pv.carregar_base(clipe)
+        camada = pv.render_layer(base, audio, out_dir / "apresentador.mp4",
+                                 duracao=dur, batidas=batidas, accent=acento,
+                                 nome=nome, palavras_faladas=tempos,
+                                 ffmpeg=ffmpeg_bin(), trabalho=out_dir)
+    else:
+        camada = pr.render_layer(pr.carregar(png), audio,
+                                 out_dir / "apresentador.mp4", duracao=dur,
+                                 batidas=batidas, accent=acento, nome=nome,
+                                 ffmpeg=ffmpeg_bin(), semente=script.topic)
+    parede = time.monotonic() - inicio
+    typer.echo(f"camada: {camada.frames} quadros em {parede:.0f}s "
+               f"({parede / max(camada.frames, 1) * 1000:.0f} ms/quadro), "
+               f"{camada.path.stat().st_size / 1e6:.1f} MB")
+    typer.echo(f"legenda: y={camada.subtitle_y} a partir de "
+               f"{camada.subtitle_start:.1f}s (cartao sai junto)")
+
+    enc = pr.plan(batidas)
+    n = max(1, int(dur * pr.FPS))
+    env = pr.envoltoria(audio, n, pr.FPS, ffmpeg=ffmpeg_bin())
+    marcos = [("chamada", min(batidas.hook_end * 0.6, dur - 0.1)),
+              ("travessia", min(enc.legenda_inicio - 0.3, dur - 0.1)),
+              ("corpo", min((enc.legenda_inicio + batidas.closing_start) / 2, dur - 0.1)),
+              ("fechamento", max(batidas.closing_start + 1.2, dur - 1.0))]
+    if usa_clipe:
+        abertura, largura = pv.trilha(tempos, n, pr.FPS)
+        abertura = pv.modular(abertura, env)
+        anim = pv.AnimadorVideo(base, pv.Quadros(base, out_dir, ffmpeg=ffmpeg_bin()),
+                                acento, nome)
+
+        def um(t: float):
+            k = min(int(t * pr.FPS), n - 1)
+            return anim.quadro(t, float(abertura[k]), float(largura[k]), enc.marcas)
+    else:
+        anim_p = pr.Animador(pr.carregar(png), acento, nome)
+        janelas = pr.piscadas(dur, script.topic)
+
+        def um(t: float):
+            k = min(int(t * pr.FPS), len(env) - 1)
+            return anim_p.quadro(t, float(env[k]), pr.fecho_em(janelas, t), enc.marcas)
+
+    tiras = []
+    for _, t in marcos:
+        quadro = um(t)
+        tela = Image.new("RGB", (pr.W, pr.H), (18, 20, 26))
+        tela.paste(quadro, (camada.x, camada.y), quadro)
+        tiras.append(tela.resize((pr.W // 4, pr.H // 4)))
+    folha = Image.new("RGB", (tiras[0].width * len(tiras), tiras[0].height))
+    for i, t in enumerate(tiras):
+        folha.paste(t, (i * t.width, 0))
+    folha.save(out_dir / "folha.png")
+    typer.echo(f"folha de contato ({', '.join(m for m, _ in marcos)}): "
+               f"{out_dir / 'folha.png'}")
 
 
 @app.command()
@@ -1517,6 +1709,153 @@ def preflight(
         typer.echo(f"  [ ] {item}")
 
     raise typer.Exit(code=0 if ok else 1)
+
+
+@app.command("slot")
+def slot_cmd(
+    slot: str = typer.Option(..., "--slot", help="0900, 1500 ou 2000 (horario de Brasilia)"),
+    day: str = typer.Option("", "--day", help="AAAA-MM-DD; padrao: hoje em Brasilia"),
+    publish: bool = typer.Option(True, "--publish/--no-publish",
+                                 help="sobe o video para a inbox do TikTok"),
+    wait: bool = typer.Option(True, "--wait/--no-wait",
+                              help="espera o horario do slot para publicar"),
+    force: bool = typer.Option(False, "--force", help="refaz slot ja concluido"),
+) -> None:
+    """Produz e publica UM slot do dia, sozinho (e o que o timer do systemd chama).
+
+    Radar -> tema para o horario -> pesquisa -> formato pela informacao ->
+    roteiro + juiz (modelos roteados por cota) -> render medido -> espera a hora
+    -> inbox do TikTok (video) ou pacote para postar (carrossel) -> aviso.
+    """
+    from datetime import date as _date
+
+    from agent.autopilot.runner import SlotRunner
+    from agent.editorial.slots import parse_slot, today
+
+    try:
+        alvo = parse_slot(slot)
+    except ValueError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED)
+        raise typer.Exit(code=2) from exc
+    dia = _date.fromisoformat(day) if day else today()
+    resultado = SlotRunner().run(alvo, dia, publish=publish, wait=wait, force=force)
+    cor = (typer.colors.GREEN if resultado.state in ("published", "ready_manual", "produced")
+           else typer.colors.YELLOW if resultado.state == "skipped" else typer.colors.RED)
+    typer.secho(f"\nslot {resultado.slot} {resultado.day}: {resultado.state.upper()}", fg=cor,
+                bold=True)
+    for rotulo, valor in (("tema", resultado.topic), ("tipo", resultado.pillar),
+                          ("formato", resultado.format), ("pacote", resultado.package_dir),
+                          ("publish_id", resultado.publish_id), ("erro", resultado.error)):
+        if valor:
+            typer.echo(f"  {rotulo:<10}: {valor}")
+    raise typer.Exit(code=0 if resultado.state != "failed" else 1)
+
+
+@app.command("slot-extra")
+def slot_extra(
+    force: bool = typer.Option(False, "--force", help="refaz a rodada extra de hoje"),
+    publish: bool = typer.Option(True, "--publish/--no-publish",
+                                 help="sobe o video para a inbox do TikTok; "
+                                      "--no-publish so produz o pacote (conferir "
+                                      "render sem gastar rascunho da inbox)"),
+    formato: str = typer.Option("", "--format",
+                                help="video (long+short), carrossel (carousel+short), "
+                                     "short ou long (um so, sem reserva); "
+                                     "vazio escolhe pelo dossie"),
+) -> None:
+    """Rodada extra fora da grade: da noticia nova a inbox, sem tocar nos slots.
+
+    Le os temas/pilares/formatos que o dia ja usou (nao repete), registra em
+    linha propria (`extra`) que nenhum timer le, e publica na hora (--no-wait).
+    """
+    from datetime import datetime as _datetime
+
+    from agent.autopilot.runner import SlotRunner
+    from agent.editorial.slots import TZ, Slot, today
+
+    agora = _datetime.now(TZ)
+    alvo = Slot("extra", agora.time(), "extra",
+                "rodada extra manual: do radar a inbox, fora da grade")
+    forca = None
+    if formato:
+        chave = formato.strip().lower()
+        if chave not in SlotRunner.FORMATOS_EXTRA:
+            typer.secho(f"--format {formato!r} desconhecido; use "
+                        + ", ".join(SlotRunner.FORMATOS_EXTRA) + ".",
+                        fg=typer.colors.RED)
+            raise typer.Exit(code=2)
+        forca = {"extra": SlotRunner.FORMATOS_EXTRA[chave]}
+    resultado = SlotRunner(formatos=forca).run(
+        alvo, today(), publish=publish, wait=False, force=force)
+    cor = (typer.colors.GREEN if resultado.state in ("published", "ready_manual", "produced")
+           else typer.colors.YELLOW if resultado.state == "skipped" else typer.colors.RED)
+    typer.secho(f"\nslot {resultado.slot} {resultado.day}: {resultado.state.upper()}", fg=cor,
+                bold=True)
+    for rotulo, valor in (("tema", resultado.topic), ("tipo", resultado.pillar),
+                          ("formato", resultado.format), ("pacote", resultado.package_dir),
+                          ("publish_id", resultado.publish_id), ("erro", resultado.error)):
+        if valor:
+            typer.echo(f"  {rotulo:<10}: {valor}")
+    raise typer.Exit(code=0 if resultado.state != "failed" else 1)
+
+
+@app.command("autopilot-status")
+def autopilot_status(
+    day: str = typer.Option("", "--day", help="AAAA-MM-DD; padrao: hoje em Brasilia"),
+    detail: bool = typer.Option(False, "--detail", help="motivo completo de cada decisao"),
+) -> None:
+    """O dia do piloto: cada slot, o motivo das escolhas, cota e custo por modelo."""
+    import json as _json
+    from datetime import UTC, datetime, timedelta
+
+    from agent.autopilot.runs import SlotRuns
+    from agent.editorial.slots import SLOTS, TZ, today
+    from agent.memory.llm_ledger import LLMLedger
+
+    settings.ensure_dirs()
+    dia = day or today().isoformat()
+    runs = {r["slot"]: r for r in SlotRuns(settings.db_path).day(dia)}
+    typer.secho(f"piloto automatico -- {dia} (horario de Brasilia)", bold=True)
+    for sid, slot in SLOTS.items():
+        r = runs.get(sid)
+        if r is None:
+            typer.echo(f"  {slot.at:%H:%M}  ainda nao rodou  ({slot.intent})")
+            continue
+        cor = {"published": typer.colors.GREEN, "ready_manual": typer.colors.CYAN,
+               "produced": typer.colors.BLUE, "failed": typer.colors.RED}.get(
+                   r["state"], typer.colors.YELLOW)
+        typer.secho(f"  {slot.at:%H:%M}  {r['state']:<12} {r['format'] or '-':<8} "
+                    f"[{r['pillar'] or '-'}] {(r['topic'] or '')[:60]}", fg=cor)
+        if r["error"]:
+            typer.secho(f"         erro: {r['error'][:160]}", fg=typer.colors.RED)
+        if r["package_dir"]:
+            typer.echo(f"         pacote: {r['package_dir']}")
+        if detail and r["plan_json"]:
+            plano = _json.loads(r["plan_json"])
+            for chave in ("topic_reason", "format_reason", "render_warning"):
+                if plano.get(chave):
+                    typer.echo(f"         {chave}: {plano[chave]}")
+    livro = LLMLedger(settings.db_path)
+    inicio = datetime.fromisoformat(dia).replace(tzinfo=TZ)
+    fim = (inicio + timedelta(days=1)).astimezone(UTC).isoformat()
+    uso: dict[str, dict[str, int]] = {}
+    for c in livro.calls_since(inicio.astimezone(UTC)):
+        if c["created_at"] >= fim:
+            continue
+        linha = uso.setdefault(c["route"], {"calls": 0, "failed": 0, "tokens": 0})
+        linha["calls"] += 1
+        linha["failed"] += 0 if c["ok"] else 1
+        linha["tokens"] += int(c["input_tokens"]) + int(c["output_tokens"])
+    if uso:
+        typer.secho("\nLLM no dia (chamadas / falhas / tokens):", bold=True)
+        for rota, u in sorted(uso.items()):
+            typer.echo(f"  {rota:<42} {u['calls']:>3} / {u['failed']:>2} / {u['tokens']:>7}")
+    esgotados = livro.quota_status()
+    if esgotados:
+        typer.secho("\nsem cota agora:", bold=True)
+        for e in esgotados:
+            typer.echo(f"  {e['route']:<42} ate {e['exhausted_until'][:16]} UTC  "
+                       f"({e['reason'][:60]})")
 
 
 if __name__ == "__main__":

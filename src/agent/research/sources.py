@@ -33,6 +33,11 @@ from agent.models import Decision
 from agent.text import tokens
 
 ALGOLIA_ITEM = "https://hn.algolia.com/api/v1/items"
+
+# Fontes cuja URL de sinal nao e texto sobre o tema: o verbete mais visto da
+# Wikipedia e sobre o assunto, mas o sinal do Trends nao tem URL, e o GDELT
+# aponta para a consulta. So essas ficam de fora da fonte primaria.
+_SEM_PAGINA_PROPRIA = frozenset({"google_trends", "gdelt"})
 GDELT_DOC = "https://api.gdeltproject.org/api/v2/doc/doc"
 
 _ID_HN = re.compile(r"[?&]id=(\d+)")
@@ -87,6 +92,12 @@ def discover(
         else:
             if primaria:
                 brutos.append(primaria)
+    elif decision.url and decision.source not in _SEM_PAGINA_PROPRIA:
+        # RSS, Hugging Face, Wikipedia (neste dia / arquivo): a URL do sinal
+        # JA e a materia, o model card ou o verbete -- a fonte primaria.
+        url = str(decision.url)
+        brutos.append(Candidate(url=url, title=decision.term,
+                                source_name=_dominio(url), origin=decision.source))
 
     brutos.extend(
         Candidate(

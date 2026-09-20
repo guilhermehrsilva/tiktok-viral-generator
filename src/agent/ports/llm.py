@@ -34,6 +34,28 @@ class LLMUnavailable(LLMError):
     """
 
 
+class LLMQuotaExhausted(LLMUnavailable):
+    """Cota negada, com o alcance dela: minuto, dia ou pedido grande demais.
+
+    Subclasse de LLMUnavailable para quem ja trata "provedor fora" continuar
+    funcionando. O alcance existe porque pede tres acoes diferentes, e foi o
+    que faltou no 19/09 (gemini-2.5-flash com 20 pedidos/dia esgotou e cada
+    estagio so via "429"):
+
+    - ``minute``: esperar ``retry_after_s`` e tentar o MESMO modelo;
+    - ``day``: esse modelo acabou ate o reset -- tentar o proximo da rota;
+    - ``request``: o pedido nao cabe no teto por minuto desse modelo (413 do
+      Groq); esperar nao resolve, so outro modelo.
+    """
+
+    def __init__(self, message: str, *, scope: str = "unknown",
+                 retry_after_s: float | None = None, limit: str = ""):
+        super().__init__(message)
+        self.scope = scope
+        self.retry_after_s = retry_after_s
+        self.limit = limit
+
+
 class LLMBlocked(LLMError):
     """O provedor recusou por filtro de conteudo.
 
