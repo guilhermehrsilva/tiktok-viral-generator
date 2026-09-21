@@ -473,7 +473,7 @@ agradar a rubrica. Melhor reprovar com o motivo gravado e escolher outro tema.
 As notas de revisão vão ordenadas por custo: **veto primeiro**. Não adianta
 melhorar o hook de um roteiro que cita número sem fonte.
 
-## Marca Seu Canal (todas as camadas obedecem)
+## Marca do canal — exemplo (todas as camadas obedecem)
 
 Vetor em `brand/brand.json` (transcrito do guia, revisar a cada 90 dias),
 fonte única via `agent/brand/`. O que vale em todo vídeo: fundo #0A0A0C, **1
@@ -484,12 +484,12 @@ e CTA próprios; legenda com as 5 hashtags `#ia #inteligenciaartificial
 #tecnologia #ai #seucanal`. Slides e avatar saem da paleta com Space
 Grotesk/Plex Mono (`brand/assets/`).
 
-> **A marca e o elenco são meus, o método é seu.** A Seu Canal, a Íris e o
-> Théo são a identidade do meu canal — gosto pessoal, não parte da técnica.
-> Sinta-se à vontade para se inspirar na estrutura (pilares, fórmulas de
-> gancho, pipeline de apresentador) e construir a sua própria marca e o seu
-> próprio avatar de IA: `brand/brand.json` mostra onde trocar cada decisão, e
-> `uv run agent brand-avatar` imprime o prompt-modelo para gerar o seu.
+> **A marca abaixo é um exemplo — o método é o que importa.** "Seu Canal",
+> a Íris e o Théo são placeholders: troque pelo nome, paleta, handle e
+> apresentadores do seu próprio canal e o agente inteiro obedece sem mudar
+> código. `brand/brand.json` mostra onde trocar cada decisão, e
+> `uv run agent brand-avatar` imprime o prompt-modelo para gerar o seu
+> apresentador de IA.
 
 O slide do carrossel distribui o conteúdo em cinco camadas, desenho que veio de
 uma referência de 20/09/2026: chip da marca + contador no topo, banho de acento

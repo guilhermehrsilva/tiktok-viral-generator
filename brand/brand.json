@@ -2,7 +2,7 @@
   "_meta": {
     "canal": "Seu Canal",
     "versao": "2.0",
-    "fonte": "brand/Seu Canal - Guia de Marca.html (transcrito em 19/09/2026)",
+    "fonte": "guia de marca do canal (transcrito em 19/09/2026)",
     "revisar_a_cada_dias": 90,
     "nota": "Arquivo fixo do fluxo: injetado em todo prompt de geracao. Divergencia conhecida: o guia mira 20-45s por formato; o Creator Rewards exige >=60s, entao o modo long (60-90s) mantem a voz e as regras da marca com a duracao da monetizacao.",
     "nota_historia": "Pilar historia adicionado em 20/09/2026 a pedido do autor (historia da tecnologia como tipo de conteudo). Nao esta no guia original: mesma voz, paleta e regras; tag HISTÓRIA, acento verde padrao."
