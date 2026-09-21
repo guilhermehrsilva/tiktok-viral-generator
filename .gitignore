@@ -16,6 +16,9 @@ __pycache__/
 !.env.example
 data/.env*
 config.local.toml
+# Memoria operacional local do agente (diario de bordo, estado do piloto).
+# O README e a fonte de consulta do repo; isto aqui e contexto de trabalho.
+CLAUDE.md
 
 # Artefatos de execucao (roteiros, slides, pacotes do piloto: dado local,
 # não portfólio — como reports/ e state/ nos outros repos).
