@@ -484,6 +484,13 @@ e CTA próprios; legenda com as 5 hashtags `#ia #inteligenciaartificial
 #tecnologia #ai #seucanal`. Slides e avatar saem da paleta com Space
 Grotesk/Plex Mono (`brand/assets/`).
 
+> **A marca e o elenco são meus, o método é seu.** A Seu Canal, a Íris e o
+> Théo são a identidade do meu canal — gosto pessoal, não parte da técnica.
+> Sinta-se à vontade para se inspirar na estrutura (pilares, fórmulas de
+> gancho, pipeline de apresentador) e construir a sua própria marca e o seu
+> próprio avatar de IA: `brand/brand.json` mostra onde trocar cada decisão, e
+> `uv run agent brand-avatar` imprime o prompt-modelo para gerar o seu.
+
 O slide do carrossel distribui o conteúdo em cinco camadas, desenho que veio de
 uma referência de 20/09/2026: chip da marca + contador no topo, banho de acento
 na diagonal sobre a foto, título grande com a **última linha (ou a última
