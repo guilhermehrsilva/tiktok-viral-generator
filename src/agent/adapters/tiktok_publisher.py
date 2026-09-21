@@ -273,8 +273,12 @@ class TikTokPublisher:
         Abaixo de 5 MB: inteiro, `chunk_size` igual ao arquivo. Acima: piso da
         divisao, com o ultimo chunk absorvendo o resto (sempre < 2x o chunk, e
         o chunk nunca passa de 64 MB, entao o teto de 128 MB do ultimo vale).
-        Configuracao fora da faixa 5-64 MB e trazida para dentro: chunk menor
-        que 5 MB seria recusado chunk a chunk no servidor.
+        Excecao: quando o piso daria 1 chunk menor que o arquivo (5 MB <
+        total < 2x o chunk), o init seria recusado com "chunk size is invalid"
+        -- com `count=1` a API exige `chunk_size == video_size`, entao o chunk
+        unico sai do tamanho do arquivo. Configuracao fora da faixa 5-64 MB e
+        trazida para dentro: chunk menor que 5 MB seria recusado chunk a chunk
+        no servidor.
         """
         if total <= SINGLE_CHUNK_MAX:
             return total, 1
@@ -283,7 +287,13 @@ class TikTokPublisher:
         # Teto de 1000 chunks: aumenta o chunk em vez de estourar a contagem.
         if total / size > MAX_CHUNKS:
             size = -(-total // MAX_CHUNKS)
-        return size, max(1, total // size)
+        n = max(1, total // size)
+        if n == 1:
+            # Piso de 1 com sobra (ex.: 12,2 MB com chunk de 10 MB): um chunk
+            # de `size` nao cobre o arquivo e o init cai em 400. Chunk unico
+            # do tamanho do arquivo, dentro dos 5-64 MB.
+            return total, 1
+        return size, n
 
     def _chunk_size(self, total: int) -> int:
         return self._plan(total)[0]

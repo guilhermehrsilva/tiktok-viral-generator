@@ -96,6 +96,17 @@ class TestPayloadDoInit:
         assert pub._plan(50_000_123) == (10_000_000, 5)
         assert pub._plan(4_194_304) == (4_194_304, 1)
 
+    def test_plano_entre_5mb_e_2x_chunk_vira_chunk_unico_do_arquivo(self):
+        # Regressao do slot 1200 de 21/09/2026: video de 12,2 MB com chunk de
+        # 10 MB saia como (10M, 1) e o init caia em 400 "chunk size is
+        # invalid" -- com count=1 a API exige chunk_size == video_size.
+        pub, _, _ = _publicador([], chunk_size=10_000_000)
+        assert pub._plan(12_249_737) == (12_249_737, 1)
+        assert pub._plan(6_000_000) == (6_000_000, 1)
+        # Acima de 2x o chunk o piso segue valendo (ultimo absorve o resto).
+        assert pub._plan(25_000_000) == (10_000_000, 2)
+        assert pub._plan(40_800_000) == (10_000_000, 4)
+
     def test_config_fora_da_faixa_5_64mb_e_trazida_para_dentro(self):
         pub, _, _ = _publicador([], chunk_size=4)
         chunk, n = pub._plan(100_000_000)
