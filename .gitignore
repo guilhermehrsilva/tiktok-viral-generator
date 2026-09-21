@@ -9,17 +9,24 @@ __pycache__/
 # Nao versionamos: e dependencia externa, nao codigo nosso.
 .renderer/
 
-# Segredos e configuracao local
+# Segredos e configuracao local (.env.example é modelo, versionado)
 .env
+!.env.example
 .env.*
+!.env.example
 data/.env*
 config.local.toml
 
-# Artefatos de execucao
+# Artefatos de execucao (roteiros, slides, pacotes do piloto: dado local,
+# não portfólio — como reports/ e state/ nos outros repos).
+output/
 storage/
 data/*.db
 data/*.db-journal
 data/voices/
+# Acumulado pelo piloto a cada narração conferida; o léxico curado vive em
+# voice/pronounce.py, não aqui.
+data/pronuncia_suspeita.txt
 # Gerados pelo piloto: cache de clipes/fotos, fonte instanciada, logs, audio.
 data/footage-cache/
 data/photos-cache/
