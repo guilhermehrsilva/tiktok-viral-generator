@@ -1,0 +1,30 @@
+name: automerge
+
+# Dá merge automático em PRs do Renovate após o CI passar.
+# Exige no GitHub: Settings > General > Allow auto-merge = on.
+# Recomendado: proteger a branch main exigindo o job "test" do ci.yml.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  automerge:
+    if: github.actor == 'renovate[bot]' && github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Habilitar auto-merge (squash) em updates minor/patch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          labels=$(gh pr view "$PR_URL" --json labels --jq '.labels[].name')
+          echo "Labels: $labels"
+          # Só entra aqui se for PR de dependência; patch já tem platformAutomerge no renovate.json,
+          # este workflow cobre o minor após o CI ficar verde.
+          gh pr merge --auto --squash "$PR_URL"

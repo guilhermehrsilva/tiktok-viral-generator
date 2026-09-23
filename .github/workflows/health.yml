@@ -1,0 +1,52 @@
+name: health
+
+# Roda a suíte toda segunda 8h37 BRT. Se quebrar, abre Issue (conta como atividade).
+# Minuto 37 quebrado de propósito: cron cheio no Actions pega fila.
+on:
+  schedule:
+    - cron: "37 11 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar deps
+        run: uv sync --locked --group dev
+
+      - name: Ruff + pytest
+        id: tests
+        run: |
+          uv run ruff check .
+          uv run pytest -q
+
+      - name: Abrir issue se falhar
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TITLE="chore: health check semanal falhou"
+          OPEN=$(gh issue list --state open --search "$TITLE in:title" --json number --jq 'length')
+          if [ "$OPEN" -eq 0 ]; then
+            gh issue create \
+              --title "$TITLE" \
+              --label "bug,automated" \
+              --body "O job \`health\` falhou em $(date -u +%F). Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}. Verificar ruff/pytest com \`uv sync --locked --group dev && uv run ruff check . && uv run pytest -q\`."
+          else
+            echo "Issue já aberta, sem duplicar."
+          fi

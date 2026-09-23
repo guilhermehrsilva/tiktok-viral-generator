@@ -1,0 +1,27 @@
+name: stale
+
+# Marca issues/PRs parados e fecha após 7 dias. Gera movimento legítimo nos repos.
+on:
+  schedule:
+    - cron: "37 12 * * *" # todo dia 9h37 BRT
+  workflow_dispatch:
+
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  stale:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/stale@v9
+        with:
+          days-before-stale: 30
+          days-before-close: 7
+          stale-issue-message: "Marcando como stale por inatividade de 30 dias. Comenta aqui que eu reabro/mantenho."
+          stale-pr-message: "PR parado há 30 dias, vai fechar em 7 dias sem atividade."
+          close-issue-message: "Fechado por inatividade. Pode reabrir quando fizer sentido."
+          close-pr-message: "Fechado por inatividade."
+          exempt-issue-labels: "pinned,no-stale,security"
+          exempt-pr-labels: "pinned,no-stale,security"
+          operations-per-run: 30
