@@ -29,11 +29,13 @@ jobs:
       - name: Instalar deps
         run: uv sync --locked --group dev
 
-      - name: Ruff + pytest
+      - name: "Ruff + pytest hermetico (sem testes de rede/mp4 local)"
         id: tests
         run: |
           uv run ruff check .
-          uv run pytest -q
+          uv run pytest -q \
+            --deselect tests/test_photos.py::TestPexels::test_cache_evita_rede \
+            --deselect tests/test_autopilot.py::TestApresentadorNoSlot::test_pilar_com_clipe_base_pede_o_clipe_e_nao_o_retrato
 
       - name: Abrir issue se falhar
         if: failure()

@@ -29,5 +29,8 @@ jobs:
       - name: Ruff check
         run: uv run ruff check .
 
-      - name: Pytest
-        run: uv run pytest -q
+      - name: "Pytest hermetico (sem testes de rede/mp4 local)"
+        run: >-
+          uv run pytest -q
+          --deselect tests/test_photos.py::TestPexels::test_cache_evita_rede
+          --deselect tests/test_autopilot.py::TestApresentadorNoSlot::test_pilar_com_clipe_base_pede_o_clipe_e_nao_o_retrato
